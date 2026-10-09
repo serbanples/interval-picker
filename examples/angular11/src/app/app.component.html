@@ -1,0 +1,36 @@
+<main class="container">
+  <h1>Interval Picker — Angular 11</h1>
+  <p>Lit Web Component embedded in an Angular 11 application.</p>
+
+  <section class="toolbar">
+    <label>Mode
+      <select [ngModel]="mode" (ngModelChange)="setMode($event)">
+        <option value="fixed">Fixed</option>
+        <option value="relative">Relative</option>
+      </select>
+    </label>
+    <label>Language
+      <select [ngModel]="locale" (ngModelChange)="setLocale($event)">
+        <option value="en">English</option>
+        <option value="de">Deutsch</option>
+      </select>
+    </label>
+    <label>Week start
+      <select [ngModel]="weekStart" (ngModelChange)="setWeekStart($event)">
+        <option value="monday">Monday</option>
+        <option value="sunday">Sunday</option>
+      </select>
+    </label>
+    <button type="button" (click)="toggle()">{{ isOpen ? 'Close' : 'Open' }}</button>
+    <button type="button" (click)="reset()">Reset</button>
+  </section>
+
+  <section class="stage">
+    <interval-date-picker #picker></interval-date-picker>
+  </section>
+
+  <h2>Selected range</h2>
+  <pre>{{ selectedRange | json }}</pre>
+  <h2>Last event</h2>
+  <pre>{{ lastEvent }}</pre>
+</main>
