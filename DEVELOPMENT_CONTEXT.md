@@ -120,3 +120,23 @@ Presets: yesterday/today/tomorrow; last/this/next week; last/this/next month; la
 - The parent stops these internal events from bubbling beyond the picker and translates them into the existing picker behavior.
 - The parent enforces forward-only range hover and at least a one-month gap between the two displayed months.
 - The previous refactor accidentally left duplicate CSS in the picker and an incomplete `picker-styles.ts`; this extraction repairs both.
+
+## Angular 11 integration branch
+
+- Branch: `feat/angular11-integration`, based on `feat/initial-implementation`.
+- `examples/angular11/` contains an Angular 11 application that consumes the existing Lit element rather than duplicating its UI.
+- Root `npm run build:angular-element` uses esbuild to produce `examples/angular11/src/assets/interval-picker.js`; Angular CLI loads it from `angular.json` scripts.
+- Angular integration uses `CUSTOM_ELEMENTS_SCHEMA`, `@ViewChild` for custom-element property access, and native event listeners cleaned up on destruction.
+- The root build uses Node 20; the Angular 11 example uses Node 14. Do not try to run Angular CLI 11 under Node 20.
+- After Lit changes, regenerate the Angular browser bundle before running the Angular demo.
+- The Angular app and bundle have not been installed or executed in this session; verify before merging.
+
+## npm distribution (Angular 11 integration branch)
+
+- Package name configured as `@serbanples/interval-picker` (requires npm scope ownership and publishing).
+- `npm run build` cleans `dist`, bundles ESM + CJS for `src/index.ts` and `src/calendar.ts` using esbuild, generates `dist/interval-picker.global.js` for Angular 11 script loading, and emits declarations with TypeScript.
+- The npm `exports` map includes `.` and `./calendar`; `files` publishes `dist/` and documentation. `prepack` runs build automatically.
+- Angular 11 example references the npm package under `node_modules` in `angular.json`, not a generated app asset. This avoids Lit 3 TypeScript compatibility issues with Angular 11's older TypeScript compiler.
+- For local pre-publication testing: `npm pack` at root (Node 20), then install generated `.tgz` in the Angular 11 demo (Node 14). A regular demo `npm install` requires the package to already be published.
+- `.github/workflows/package.yml` validates formatting, TypeScript, build, pack dry-run, and expected artifacts.
+- **Important**: The environment has not been able to fetch npm dependencies or execute the build, formatting, or npm pack; do not describe this branch as tested or published until CI or local validation confirms it.

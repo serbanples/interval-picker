@@ -1,7 +1,7 @@
 name: Auto-format with Prettier
 on:
   push:
-    branches: [feat/initial-implementation]
+    branches: [feat/initial-implementation, feat/angular11-integration]
 permissions:
   contents: write
 jobs:
