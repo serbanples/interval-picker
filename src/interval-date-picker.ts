@@ -1,98 +1,12 @@
-import { LitElement, html, css, nothing } from 'lit';
+import { LitElement, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import type { DateAdapter, Mode, Preset, Range } from './types.js';
+import { isoAdapter } from './date-adapters.js';
+import { day, month, same } from './date-utils.js';
+import { presetRange, presets, labels } from './presets.js';
+import { pickerStyles } from './picker-styles.js';
 
-export type Mode = 'relative' | 'fixed';
-export type Preset =
-  | 'yesterday'
-  | 'today'
-  | 'tomorrow'
-  | 'lastWeek'
-  | 'thisWeek'
-  | 'nextWeek'
-  | 'lastMonth'
-  | 'thisMonth'
-  | 'nextMonth'
-  | 'lastYear'
-  | 'thisYear'
-  | 'nextYear';
-export type Range<T> = { from: T; to: T };
-export interface DateAdapter<T> {
-  parse(value: T): Date;
-  serialize(date: Date): T;
-}
-export const isoAdapter: DateAdapter<string> = {
-  parse: (value) => {
-    const [y, m, d] = value.split('-').map(Number);
-    return new Date(y, m - 1, d);
-  },
-  serialize: (date) =>
-    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`,
-};
-const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-const add = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
-const month = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth() + n, 1);
-const same = (a: Date, b: Date) => day(a).getTime() === day(b).getTime();
-const weekStart = (d: Date) => add(day(d), -((d.getDay() + 6) % 7));
-function presetRange(p: Preset, now = new Date()): Range<Date> {
-  const today = day(now);
-  const week = weekStart(today);
-  const thisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const thisYear = new Date(today.getFullYear(), 0, 1);
-  const ranges: Record<Preset, Range<Date>> = {
-    yesterday: { from: add(today, -1), to: add(today, -1) },
-    today: { from: today, to: today },
-    tomorrow: { from: add(today, 1), to: add(today, 1) },
-    lastWeek: { from: add(week, -7), to: add(week, -1) },
-    thisWeek: { from: week, to: add(week, 6) },
-    nextWeek: { from: add(week, 7), to: add(week, 13) },
-    lastMonth: { from: month(thisMonth, -1), to: add(thisMonth, -1) },
-    thisMonth: { from: thisMonth, to: add(month(thisMonth, 1), -1) },
-    nextMonth: { from: month(thisMonth, 1), to: add(month(thisMonth, 2), -1) },
-    lastYear: { from: new Date(today.getFullYear() - 1, 0, 1), to: add(thisYear, -1) },
-    thisYear: { from: thisYear, to: new Date(today.getFullYear(), 11, 31) },
-    nextYear: {
-      from: new Date(today.getFullYear() + 1, 0, 1),
-      to: new Date(today.getFullYear() + 1, 11, 31),
-    },
-  };
-  return ranges[p];
-}
-const presets: Preset[][] = [
-  ['yesterday', 'today', 'tomorrow'],
-  ['lastWeek', 'thisWeek', 'nextWeek'],
-  ['lastMonth', 'thisMonth', 'nextMonth'],
-  ['lastYear', 'thisYear', 'nextYear'],
-];
-const labels: Record<string, Record<Preset, string>> = {
-  en: {
-    yesterday: 'Yesterday',
-    today: 'Today',
-    tomorrow: 'Tomorrow',
-    lastWeek: 'Last week',
-    thisWeek: 'This week',
-    nextWeek: 'Next week',
-    lastMonth: 'Last month',
-    thisMonth: 'This month',
-    nextMonth: 'Next month',
-    lastYear: 'Last year',
-    thisYear: 'This year',
-    nextYear: 'Next year',
-  },
-  de: {
-    yesterday: 'Gestern',
-    today: 'Heute',
-    tomorrow: 'Morgen',
-    lastWeek: 'Letzte Woche',
-    thisWeek: 'Diese Woche',
-    nextWeek: 'Nächste Woche',
-    lastMonth: 'Letzter Monat',
-    thisMonth: 'Dieser Monat',
-    nextMonth: 'Nächster Monat',
-    lastYear: 'Letztes Jahr',
-    thisYear: 'Dieses Jahr',
-    nextYear: 'Nächstes Jahr',
-  },
-};
+ static styles = pickerStyles;
 @customElement('interval-date-picker')
 export class IntervalDatePicker extends LitElement {
   @property({ type: String }) mode: Mode = 'fixed';
