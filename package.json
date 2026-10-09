@@ -1,19 +1,24 @@
 {
-  "name": "interval-picker",
+  "name": "@serbanples/interval-picker",
   "version": "0.1.0",
   "type": "module",
-  "main": "./dist/interval-date-picker.js",
-  "types": "./dist/interval-date-picker.d.ts",
+  "main": "./dist/index.cjs",
+  "types": "./dist/index.d.ts",
   "engines": {
-    "node": ">=20 <21"
+    "node": ">=18"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && npm run build:js && npm run build:types",
     "check": "tsc --noEmit",
     "dev": "vite --host 127.0.0.1",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "build:angular-element": "esbuild src/interval-date-picker.ts --bundle --format=iife --target=es2018 --outfile=examples/angular11/src/assets/interval-picker.js"
+    "build:angular-element": "npm run build && node scripts/copy-angular-bundle.mjs",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build:js": "node scripts/build.mjs",
+    "build:types": "tsc --emitDeclarationOnly --declaration --declarationMap false --outDir dist",
+    "prepack": "npm run build",
+    "pack:check": "npm pack --dry-run"
   },
   "dependencies": {
     "lit": "^3.2.0"
@@ -24,5 +29,27 @@
     "vite": "^5.4.0",
     "prettier": "^3.6.2",
     "esbuild": "^0.24.2"
+  },
+  "module": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./calendar": {
+      "types": "./dist/calendar.d.ts",
+      "import": "./dist/calendar.js",
+      "require": "./dist/calendar.cjs"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": true,
+  "publishConfig": {
+    "access": "public"
   }
 }
