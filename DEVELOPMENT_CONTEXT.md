@@ -55,7 +55,7 @@ Presets: yesterday/today/tomorrow; last/this/next week; last/this/next month; la
   - Right moves backward to or before left: left moves to one month before right.
   - Example October/November -> move right forward: October/December; move right backward from October/November: September/October.
 - First day click begins a new range (`selectingEnd=true`).
-- Hovering/focusing another day previews a highlighted interval between the first date and the hovered/focused date. Preview works across visible months and clears when leaving the calendars.
+- Hovering/focusing a day **on or after the selected start date** previews a highlighted interval. Hovering an earlier date does not preview a range, matching the existing end-date selection constraint. Preview works across visible months and clears when leaving the calendars.
 - Second day click completes the range. **Current implementation clamps an end date earlier than the start to the start**; this is a known behavior to revisit if reverse range selection is desired.
 - Completed range stays highlighted. Save commits `value` through the configured adapter and emits `range-change`.
 - Close hides the component and emits `picker-close`.
