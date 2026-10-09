@@ -3,6 +3,7 @@
 > Maintainer/AI handoff document. Updated 2026-10-09. Keep this document current when changing behavior or architecture.
 
 ## Project and goal
+
 - Repository: https://github.com/serbanples/interval-picker
 - Current development branch: `feat/initial-implementation` (PR #1 into `main`).
 - Goal: one framework-independent interval/date-range picker usable in Angular 11, Qwik, and other browser frameworks without duplicating the UI implementation.
@@ -11,6 +12,7 @@
 - Initial design was based on a provided screenshot, with Relative and Fixed tabs, two calendars, interval highlighting, and action buttons.
 
 ## Repository files
+
 - `src/interval-date-picker.ts`: the component, date calculations, presets, adapter types, styles, and event dispatching (currently in one file).
 - `test.html`: interactive standalone playground for visual and behavioral testing.
 - `package.json`: dependencies and scripts (`dev`, `check`, `build`).
@@ -20,6 +22,7 @@
 - `README.md`: basic setup and usage.
 
 ## Run locally
+
 ```bash
 git checkout feat/initial-implementation
 nvm use 20
@@ -28,9 +31,11 @@ npm run check
 npm run build
 npm run dev
 ```
+
 Open `http://localhost:5173/test.html`. Vite loads the TypeScript source directly for development; the production build uses `tsc`.
 
 ## Public API currently implemented
+
 - `mode: 'fixed' | 'relative'` (default `fixed`).
 - `locale` (default `en`; English and German preset labels provided).
 - `week-start: 'monday' | 'sunday'` (default `monday`).
@@ -43,9 +48,11 @@ Open `http://localhost:5173/test.html`. Vite loads the TypeScript source directl
 - Styles use Shadow DOM and CSS custom properties `--picker-accent` and `--picker-range`.
 
 ## Relative mode
+
 Presets: yesterday/today/tomorrow; last/this/next week; last/this/next month; last/this/next year. Clicking a preset computes the corresponding inclusive date interval and immediately emits `range-change`. The week-based presets currently assume Monday as week start independently of the configurable calendar weekday header; consider aligning these.
 
 ## Fixed mode and calendar behavior
+
 - Two calendars are rendered, each with previous and next arrows.
 - The left month (`visibleMonth`) and right month (`rightMonth`) are separate reactive state values.
 - Navigation keeps the right calendar **at least one month after** the left:
@@ -62,14 +69,17 @@ Presets: yesterday/today/tomorrow; last/this/next week; last/this/next month; la
 - Summary below calendars shows the draft interval.
 
 ## Test playground
+
 `test.html` includes controls for mode, language, week start, opening/closing, reset, and a JSON event output panel. Use it to inspect hover preview, cross-month selections, navigation constraints, and emitted events.
 
 ## Integration notes
+
 - Angular 11: register the JS bundle once; add `CUSTOM_ELEMENTS_SCHEMA` to the Angular module; consume native custom events.
 - Qwik: load/register the element on the client; integrate native custom events with Qwik handlers.
 - A typed wrapper and proper framework integration tests have not yet been implemented.
 
 ## Known limitations / follow-ups
+
 1. Build and browser interactions have **not been independently verified** in this chat. Run CI and manual checks before merging/publishing.
 2. The source is currently a single large component file; consider extracting date math, presets, and calendar view logic for testability.
 3. Accessibility: full keyboard navigation, focus management, ARIA range semantics, and screen-reader behavior need work.
@@ -82,6 +92,7 @@ Presets: yesterday/today/tomorrow; last/this/next week; last/this/next month; la
 10. The component renders inline; popup positioning/triggering remains the host application's responsibility.
 
 ## Development conventions
+
 - Preserve framework independence and native DOM event contracts.
 - Keep date math local-date based unless explicitly introducing timezone semantics.
 - Maintain left/right month separation and non-overlap when changing navigation.
