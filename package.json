@@ -4,8 +4,12 @@
   "type": "module",
   "main": "./dist/interval-date-picker.js",
   "types": "./dist/interval-date-picker.d.ts",
+  "engines": {
+    "node": ">=20 <21"
+  },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "check": "tsc --noEmit"
   },
   "dependencies": {
     "lit": "^3.2.0"
