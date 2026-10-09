@@ -1,0 +1,33 @@
+name: Package build and npm pack
+
+on:
+  push:
+    branches:
+      - feat/angular11-integration
+  pull_request:
+    branches:
+      - feat/initial-implementation
+      - main
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run format:check
+      - run: npm run check
+      - run: npm run build
+      - run: npm run pack:check
+      - name: Verify npm package contents
+        run: |
+          test -f dist/index.js
+          test -f dist/index.cjs
+          test -f dist/index.d.ts
+          test -f dist/calendar.js
+          test -f dist/calendar.cjs
+          test -f dist/calendar.d.ts
+          test -f dist/interval-picker.global.js
