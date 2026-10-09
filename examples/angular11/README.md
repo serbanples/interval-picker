@@ -1,20 +1,8 @@
-# Angular 11 demo
+# Angular 11 npm consumer
 
-This app uses the existing Lit `<interval-date-picker>` Web Component, not an Angular rewrite.
+This Angular 11 example consumes the packaged Lit Web Component, without compiling its source.
 
-## Build the Web Component (Node 20)
-
-From the repository root:
-
-```bash
-nvm use 20
-npm install
-npm run build:angular-element
-```
-
-This generates `examples/angular11/src/assets/interval-picker.js` using esbuild. Angular 11 consumes the browser-ready bundle through the `scripts` setting in `angular.json`; its old TypeScript compiler does not need to compile Lit 3 source.
-
-## Run Angular 11 (Node 14)
+## Once published to npm
 
 ```bash
 cd examples/angular11
@@ -25,13 +13,38 @@ npm start
 
 Open http://localhost:4200.
 
-Angular CLI 11 is not compatible with the root project's Node 20 requirement. Use Node 14 for the demo's CLI.
+The demo depends on `@serbanples/interval-picker@^0.1.0`. This version must exist on npm before a normal `npm install` works.
 
-## Integration
+## Test locally before publishing
 
-- `CUSTOM_ELEMENTS_SCHEMA` allows Angular to render the custom element.
-- `@ViewChild` sets native custom-element properties, including complex `value`.
-- Native `range-change`, `mode-change`, and `picker-close` events are subscribed and cleaned up in lifecycle hooks.
-- The default date value format is `{ from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' }`.
+From the repository root, with Node 20:
 
-After changing the Lit source, rebuild the bundle from the repository root.
+```bash
+npm install
+npm run format
+npm run build
+npm pack
+```
+
+Copy the generated `serbanples-interval-picker-0.1.0.tgz` archive into the Angular project (or use its absolute path). In `examples/angular11/package.json`, temporarily replace the package dependency with:
+
+```json
+"@serbanples/interval-picker": "file:./serbanples-interval-picker-0.1.0.tgz"
+```
+
+Then use Node 14 to install and start Angular 11:
+
+```bash
+cd examples/angular11
+nvm use 14
+npm install
+npm start
+```
+
+Angular CLI 11 loads `node_modules/@serbanples/interval-picker/dist/interval-picker.global.js` via the `scripts` array in `angular.json`. The bundle contains Lit and is compatible with the older Angular CLI toolchain. No copying generated files into the app's source tree is required.
+
+## API
+
+- `CUSTOM_ELEMENTS_SCHEMA` permits the `<interval-date-picker>` tag.
+- `@ViewChild` accesses the element's JavaScript properties.
+- Native `range-change`, `mode-change`, and `picker-close` events are subscribed and removed in Angular lifecycle hooks.
