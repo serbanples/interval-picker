@@ -13,7 +13,8 @@
 
 ## Repository files
 
-- `src/interval-date-picker.ts`: Lit component, reactive state, event dispatching, and calendar rendering; re-exports public types and ISO adapter for backwards compatibility.
+- `src/interval-date-picker.ts`: parent Lit picker; owns interval state, two-month navigation coordination, presets, adapter and public events. Renders two `<interval-calendar>` elements; re-exports public types and ISO adapter.
+- `src/interval-calendar.ts`: standalone reusable `<interval-calendar>` custom element. Renders one month and emits `day-select`, `day-hover`, and `month-navigate` (all bubbling and composed). Props: `month`, `locale`, `weekStart`, `range`, `previewEnd`, `selectingEnd`. Does not own interval selection or navigation state.
 - `src/types.ts`: shared public TypeScript types and adapter interface.
 - `src/date-adapters.ts`: default ISO date adapter.
 - `src/date-utils.ts`: reusable calendar date arithmetic and comparisons.
@@ -86,7 +87,7 @@ Presets: yesterday/today/tomorrow; last/this/next week; last/this/next month; la
 ## Known limitations / follow-ups
 
 1. Build and browser interactions have **not been independently verified** in this chat. Run CI and manual checks before merging/publishing.
-2. Date math, presets, adapter, types, and styles have been extracted. Calendar rendering remains inside the Lit component; consider splitting it further if it grows.
+2. Date math, presets, adapter, types, picker styles and the standalone calendar component are separated. Add component tests and a standalone calendar playground in a future iteration.
 3. Accessibility: full keyboard navigation, focus management, ARIA range semantics, and screen-reader behavior need work.
 4. Date boundaries: min/max dates, disabled days, configurable presets, and validation are not implemented.
 5. Adapter typing uses `unknown` on the custom element; typed wrappers could improve ergonomics.
@@ -109,3 +110,11 @@ Presets: yesterday/today/tomorrow; last/this/next week; last/this/next month; la
 - Prettier 3 is configured in `.prettierrc.json`.
 - Before future code commits run `npm run format`, then `npm run format:check`.
 - GitHub Actions has a formatter workflow for the feature branch; do not assume it has run without checking the workflow status.
+
+## Reusable calendar contract
+- Import `src/interval-calendar.ts` to register `<interval-calendar>` without loading the full picker.
+- The calendar is presentational: its month is controlled externally, and it emits navigation intent rather than changing its own month.
+- `day-select` / `day-hover`: `event.detail.date` is a local calendar `Date`; `month-navigate`: `event.detail.direction` is -1 or 1.
+- The parent stops these internal events from bubbling beyond the picker and translates them into the existing picker behavior.
+- The parent enforces forward-only range hover and at least a one-month gap between the two displayed months.
+- The previous refactor accidentally left duplicate CSS in the picker and an incomplete `picker-styles.ts`; this extraction repairs both.
