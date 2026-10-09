@@ -2,7 +2,10 @@ import { AfterViewInit, Component, ElementRef, OnDestroy, ViewChild } from '@ang
 
 type PickerMode = 'fixed' | 'relative';
 type WeekStart = 'monday' | 'sunday';
-interface DateRange { from: string; to: string; }
+interface DateRange {
+  from: string;
+  to: string;
+}
 interface RangeChangeDetail {
   mode: PickerMode;
   value: DateRange;

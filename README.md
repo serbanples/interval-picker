@@ -18,9 +18,7 @@ In `angular.json`:
 
 ```json
 {
-  "scripts": [
-    "node_modules/@serbanples/interval-picker/dist/interval-picker.global.js"
-  ]
+  "scripts": ["node_modules/@serbanples/interval-picker/dist/interval-picker.global.js"]
 }
 ```
 

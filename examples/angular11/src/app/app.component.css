@@ -3,8 +3,12 @@
   margin: 30px auto;
   padding: 0 20px;
 }
-h1 { margin-bottom: 6px; }
-p { color: #64748b; }
+h1 {
+  margin-bottom: 6px;
+}
+p {
+  color: #64748b;
+}
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -16,14 +20,22 @@ p { color: #64748b; }
   padding: 16px;
   margin: 20px 0;
 }
-label { display: grid; gap: 6px; font-size: 13px; font-weight: bold; }
-select, button {
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: bold;
+}
+select,
+button {
   padding: 9px 12px;
   border: 1px solid #cbd5e1;
   border-radius: 5px;
   background: white;
 }
-button { cursor: pointer; }
+button {
+  cursor: pointer;
+}
 .stage {
   background: #eaf0f8;
   border-radius: 10px;
