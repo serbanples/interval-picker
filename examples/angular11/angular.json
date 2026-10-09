@@ -16,14 +16,22 @@
             "main": "src/main.ts",
             "polyfills": "src/polyfills.ts",
             "tsConfig": "tsconfig.app.json",
-            "assets": ["src/assets"],
-            "styles": ["src/styles.css"],
-            "scripts": ["src/assets/interval-picker.js"]
+            "assets": [
+              "src/assets"
+            ],
+            "styles": [
+              "src/styles.css"
+            ],
+            "scripts": [
+              "node_modules/@serbanples/interval-picker/dist/interval-picker.global.js"
+            ]
           }
         },
         "serve": {
           "builder": "@angular-devkit/build-angular:dev-server",
-          "options": { "browserTarget": "demo:build" }
+          "options": {
+            "browserTarget": "demo:build"
+          }
         }
       }
     }
