@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interval Picker — Component Preview</title>
+    <style>
+      :root {
+        font-family: Inter, system-ui, Arial, sans-serif;
+        color: #253247;
+        background: #f4f7fb;
+      }
+      body {
+        margin: 0;
+        padding: 32px 20px;
+      }
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      h1 {
+        margin-bottom: 6px;
+      }
+      p {
+        color: #63748a;
+      }
+      .toolbar {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: end;
+        padding: 16px;
+        background: white;
+        border: 1px solid #e1e6ee;
+        border-radius: 10px;
+        margin: 20px 0;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      select,
+      .toolbar button {
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 9px 12px;
+        background: white;
+        color: #334155;
+        font: inherit;
+      }
+      .toolbar button {
+        cursor: pointer;
+      }
+      .toolbar button:hover {
+        background: #eef4ff;
+      }
+      .stage {
+        min-height: 450px;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 26px 10px;
+        background: #eaf0f8;
+        border-radius: 10px;
+        overflow-x: auto;
+      }
+      interval-date-picker {
+        max-width: 100%;
+      }
+      pre {
+        background: #172438;
+        color: #cce0ff;
+        padding: 18px;
+        border-radius: 10px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        min-height: 70px;
+      }
+      .hint {
+        font-size: 13px;
+      }
+    </style>
+    <script type="module" src="./src/interval-date-picker.ts"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Interval Picker Playground</h1>
+      <p>Test navigation, range selection, relative presets, localization, and emitted events.</p>
+      <div class="toolbar">
+        <label
+          >Mode
+          <select id="mode">
+            <option value="fixed">Fixed</option>
+            <option value="relative">Relative</option>
+          </select>
+        </label>
+        <label
+          >Language
+          <select id="locale">
+            <option value="en">English</option>
+            <option value="de">Deutsch</option>
+          </select>
+        </label>
+        <label
+          >Week starts
+          <select id="weekStart">
+            <option value="monday">Monday</option>
+            <option value="sunday">Sunday</option>
+          </select>
+        </label>
+        <button id="toggle" type="button">Close picker</button>
+        <button id="reset" type="button">Reset selection</button>
+      </div>
+      <div class="stage">
+        <interval-date-picker
+          id="picker"
+          mode="fixed"
+          locale="en"
+          week-start="monday"
+        ></interval-date-picker>
+      </div>
+      <h2>Event output</h2>
+      <p class="hint">Select a date range and click Save, or choose a relative preset.</p>
+      <pre id="output" aria-live="polite">No events yet.</pre>
+    </main>
+    <script type="module">
+      const picker = document.getElementById('picker');
+      const output = document.getElementById('output');
+      const mode = document.getElementById('mode');
+      const locale = document.getElementById('locale');
+      const weekStart = document.getElementById('weekStart');
+      const toggle = document.getElementById('toggle');
+      const reset = document.getElementById('reset');
+
+      const log = (event) => {
+        output.textContent = JSON.stringify(
+          {
+            event: event.type,
+            detail: event.detail ?? null,
+            time: new Date().toLocaleTimeString(),
+          },
+          null,
+          2,
+        );
+      };
+      for (const name of ['range-change', 'mode-change', 'picker-close']) {
+        picker.addEventListener(name, (event) => {
+          log(event);
+          mode.value = picker.mode;
+          toggle.textContent = picker.open ? 'Close picker' : 'Open picker';
+        });
+      }
+      mode.addEventListener('change', () => {
+        picker.mode = mode.value;
+        picker.open = true;
+        toggle.textContent = 'Close picker';
+      });
+      locale.addEventListener('change', () => {
+        picker.locale = locale.value;
+      });
+      weekStart.addEventListener('change', () => {
+        picker.weekStart = weekStart.value;
+      });
+      toggle.addEventListener('click', () => {
+        picker.open = !picker.open;
+        toggle.textContent = picker.open ? 'Close picker' : 'Open picker';
+      });
+      reset.addEventListener('click', () => {
+        picker.value = null;
+        picker.open = true;
+        picker.preset = 'thisWeek';
+        picker.requestUpdate();
+        toggle.textContent = 'Close picker';
+        output.textContent = 'Selection reset. Choose another range.';
+      });
+    </script>
+  </body>
+</html>
