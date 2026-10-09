@@ -1,4 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
+export type { DateAdapter, Mode, Preset, Range } from './types.js';
+export { isoAdapter } from './date-adapters.js';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { DateAdapter, Mode, Preset, Range } from './types.js';
 import { isoAdapter } from './date-adapters.js';
