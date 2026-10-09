@@ -13,7 +13,12 @@
 
 ## Repository files
 
-- `src/interval-date-picker.ts`: the component, date calculations, presets, adapter types, styles, and event dispatching (currently in one file).
+- `src/interval-date-picker.ts`: Lit component, reactive state, event dispatching, and calendar rendering; re-exports public types and ISO adapter for backwards compatibility.
+- `src/types.ts`: shared public TypeScript types and adapter interface.
+- `src/date-adapters.ts`: default ISO date adapter.
+- `src/date-utils.ts`: reusable calendar date arithmetic and comparisons.
+- `src/presets.ts`: relative interval presets and translated labels.
+- `src/picker-styles.ts`: component Shadow DOM CSS.
 - `test.html`: interactive standalone playground for visual and behavioral testing.
 - `package.json`: dependencies and scripts (`dev`, `check`, `build`).
 - `tsconfig.json`: ES2020 browser build, Bundler module resolution, declarations, decorators, strict checking; `types: []` and `skipLibCheck: true` to isolate browser code from ambient Node type conflicts.
@@ -81,7 +86,7 @@ Presets: yesterday/today/tomorrow; last/this/next week; last/this/next month; la
 ## Known limitations / follow-ups
 
 1. Build and browser interactions have **not been independently verified** in this chat. Run CI and manual checks before merging/publishing.
-2. The source is currently a single large component file; consider extracting date math, presets, and calendar view logic for testability.
+2. Date math, presets, adapter, types, and styles have been extracted. Calendar rendering remains inside the Lit component; consider splitting it further if it grows.
 3. Accessibility: full keyboard navigation, focus management, ARIA range semantics, and screen-reader behavior need work.
 4. Date boundaries: min/max dates, disabled days, configurable presets, and validation are not implemented.
 5. Adapter typing uses `unknown` on the custom element; typed wrappers could improve ergonomics.
@@ -99,3 +104,8 @@ Presets: yesterday/today/tomorrow; last/this/next week; last/this/next month; la
 - Preview must not commit values or emit `range-change` until selection is finalized and saved.
 - Prefer adding tests for navigation edge cases, hover preview, adapter serialization, and preset boundaries.
 - Update this document when implementing features or changing public API.
+
+## Formatting convention
+- Prettier 3 is configured in `.prettierrc.json`.
+- Before future code commits run `npm run format`, then `npm run format:check`.
+- GitHub Actions has a formatter workflow for the feature branch; do not assume it has run without checking the workflow status.
