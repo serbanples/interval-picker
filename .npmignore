@@ -1,0 +1,7 @@
+node_modules/
+examples/
+src/
+scripts/
+.github/
+test.html
+*.tsbuildinfo
