@@ -59,9 +59,13 @@ export class IntervalDatePicker extends LitElement {
 
   private setMode(mode: Mode) {
     this.mode = mode;
-    this.dispatchEvent(new CustomEvent('mode-change', {
-      detail: { mode }, bubbles: true, composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent('mode-change', {
+        detail: { mode },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private choosePreset(preset: Preset) {
@@ -108,18 +112,23 @@ export class IntervalDatePicker extends LitElement {
     this.value = value;
     this.selectingEnd = false;
     this.hoverDate = null;
-    this.dispatchEvent(new CustomEvent('range-change', {
-      detail: { mode: this.mode, value, preset: preset ?? null },
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent('range-change', {
+        detail: { mode: this.mode, value, preset: preset ?? null },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private close() {
     this.open = false;
-    this.dispatchEvent(new CustomEvent('picker-close', {
-      bubbles: true, composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent('picker-close', {
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private renderCalendar(displayedMonth: Date, index: number) {
@@ -142,9 +151,8 @@ export class IntervalDatePicker extends LitElement {
         @day-hover=${(event: CustomEvent<{ date: Date }>) => {
           event.stopPropagation();
           if (this.selectingEnd) {
-            this.hoverDate = this.draft && event.detail.date >= this.draft.from
-              ? event.detail.date
-              : null;
+            this.hoverDate =
+              this.draft && event.detail.date >= this.draft.from ? event.detail.date : null;
           }
         }}
       ></interval-calendar>
@@ -154,9 +162,12 @@ export class IntervalDatePicker extends LitElement {
   render() {
     if (!this.open) return nothing;
     const localizedLabels = labels[this.locale.split('-')[0]] ?? labels.en;
-    const format = (date: Date) => new Intl.DateTimeFormat(this.locale, {
-      day: '2-digit', month: '2-digit', year: 'numeric',
-    }).format(date);
+    const format = (date: Date) =>
+      new Intl.DateTimeFormat(this.locale, {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }).format(date);
 
     return html`
       <div class="panel">
@@ -165,44 +176,68 @@ export class IntervalDatePicker extends LitElement {
           <button
             class=${this.mode === 'relative' ? 'active' : ''}
             @click=${() => this.setMode('relative')}
-          >${this.mode === 'relative' ? '✓ ' : ''}Relative</button>
+          >
+            ${this.mode === 'relative' ? '✓ ' : ''}Relative
+          </button>
           <button
             class=${this.mode === 'fixed' ? 'active' : ''}
             @click=${() => this.setMode('fixed')}
-          >${this.mode === 'fixed' ? '✓ ' : ''}Fixed</button>
+          >
+            ${this.mode === 'fixed' ? '✓ ' : ''}Fixed
+          </button>
           <button class="x" aria-label="Close" @click=${this.close}>×</button>
         </div>
 
-        ${this.mode === 'relative'
-          ? html`
-              <div class="presets">
-                ${presets.map((row) => html`
-                  <div class="preset-row">
-                    ${row.map((preset) => html`
-                      <button
-                        class=${this.selectedPreset === preset ? 'selected' : ''}
-                        @click=${() => this.choosePreset(preset)}
-                      >${this.selectedPreset === preset ? '✓ ' : ''}${localizedLabels[preset]}</button>
-                    `)}
-                  </div>
-                `)}
-              </div>
-            `
-          : html`
-              <div class="calendars" @mouseleave=${() => (this.hoverDate = null)}>
-                ${this.renderCalendar(this.visibleMonth, 0)}
-                ${this.renderCalendar(this.rightMonth, 1)}
-              </div>
-              ${this.draft
-                ? html`<div class="summary">Interval: ${format(this.draft.from)} – ${format(this.draft.to)}</div>`
-                : nothing}
-            `}
+        ${
+          this.mode === 'relative'
+            ? html`
+                <div class="presets">
+                  ${presets.map(
+                    (row) => html`
+                      <div class="preset-row">
+                        ${row.map(
+                          (preset) => html`
+                            <button
+                              class=${this.selectedPreset === preset ? 'selected' : ''}
+                              @click=${() => this.choosePreset(preset)}
+                            >
+                              ${this.selectedPreset === preset ? '✓ ' : ''}${localizedLabels[preset]}
+                            </button>
+                          `,
+                        )}
+                      </div>
+                    `,
+                  )}
+                </div>
+              `
+            : html`
+                <div class="calendars" @mouseleave=${() => (this.hoverDate = null)}>
+                  ${this.renderCalendar(this.visibleMonth, 0)}
+                  ${this.renderCalendar(this.rightMonth, 1)}
+                </div>
+                ${
+                  this.draft
+                    ? html`<div class="summary">
+                        Interval: ${format(this.draft.from)} – ${format(this.draft.to)}
+                      </div>`
+                    : nothing
+                }
+              `
+        }
 
         <div class="actions">
           <button @click=${this.close}>CLOSE</button>
-          ${this.mode === 'fixed'
-            ? html`<button class="save" ?disabled=${!this.draft || this.selectingEnd} @click=${() => this.commit()}>SAVE</button>`
-            : nothing}
+          ${
+            this.mode === 'fixed'
+              ? html`<button
+                  class="save"
+                  ?disabled=${!this.draft || this.selectingEnd}
+                  @click=${() => this.commit()}
+                >
+                  SAVE
+                </button>`
+              : nothing
+          }
         </div>
       </div>
     `;

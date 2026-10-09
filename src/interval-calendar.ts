@@ -23,10 +23,14 @@ export class IntervalCalendar extends LitElement {
       width: 252px;
       min-width: 0;
       color: #40506b;
-      font: 13px Arial, sans-serif;
+      font:
+        13px Arial,
+        sans-serif;
     }
 
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+    }
     .nav {
       display: flex;
       align-items: center;
@@ -34,7 +38,10 @@ export class IntervalCalendar extends LitElement {
       height: 29px;
       color: #266cc0;
     }
-    .nav strong { font-size: 12px; text-transform: uppercase; }
+    .nav strong {
+      font-size: 12px;
+      text-transform: uppercase;
+    }
     .nav button {
       background: none;
       border: 0;
@@ -47,7 +54,11 @@ export class IntervalCalendar extends LitElement {
       grid-template-columns: repeat(7, minmax(0, 1fr));
       text-align: center;
     }
-    .weekday { font-size: 10px; color: #8491a4; padding: 7px 0; }
+    .weekday {
+      font-size: 10px;
+      color: #8491a4;
+      padding: 7px 0;
+    }
     .date {
       border: 0;
       background: transparent;
@@ -56,15 +67,25 @@ export class IntervalCalendar extends LitElement {
       cursor: pointer;
       font-size: 12px;
     }
-    .date.in-range, .date.preview { background: var(--picker-range, #e4efff); }
+    .date.in-range,
+    .date.preview {
+      background: var(--picker-range, #e4efff);
+    }
     .date.endpoint {
       border: 1px solid var(--picker-accent, #2678db);
       border-radius: 50%;
       color: #166acb;
       background: #dceaff;
     }
-    .date:hover { outline: 1px solid #8cb8ef; border-radius: 50%; }
-    @media (max-width: 580px) { :host { width: 100%; } }
+    .date:hover {
+      outline: 1px solid #8cb8ef;
+      border-radius: 50%;
+    }
+    @media (max-width: 580px) {
+      :host {
+        width: 100%;
+      }
+    }
   `;
 
   private emit<T>(name: string, detail: T) {
@@ -72,13 +93,16 @@ export class IntervalCalendar extends LitElement {
   }
 
   private renderDay(date: Date) {
-    const selected = !!this.range &&
-      (same(date, this.range.from) || same(date, this.range.to));
-    const inRange = !this.selectingEnd && !!this.range &&
-      date >= this.range.from && date <= this.range.to;
-    const preview = this.selectingEnd && !!this.range && !!this.previewEnd &&
+    const selected = !!this.range && (same(date, this.range.from) || same(date, this.range.to));
+    const inRange =
+      !this.selectingEnd && !!this.range && date >= this.range.from && date <= this.range.to;
+    const preview =
+      this.selectingEnd &&
+      !!this.range &&
+      !!this.previewEnd &&
       this.previewEnd >= this.range.from &&
-      date >= this.range.from && date <= this.previewEnd;
+      date >= this.range.from &&
+      date <= this.previewEnd;
 
     return html`
       <button
@@ -88,7 +112,9 @@ export class IntervalCalendar extends LitElement {
         @mouseenter=${() => this.emit('day-hover', { date })}
         @focus=${() => this.emit('day-hover', { date })}
         @click=${() => this.emit('day-select', { date })}
-      >${date.getDate()}</button>
+      >
+        ${date.getDate()}
+      </button>
     `;
   }
 
@@ -96,9 +122,7 @@ export class IntervalCalendar extends LitElement {
     const first = new Date(this.month.getFullYear(), this.month.getMonth(), 1);
     const offset = (first.getDay() - (this.weekStart === 'monday' ? 1 : 0) + 7) % 7;
     const count = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
-    const weekdays = this.weekStart === 'monday'
-      ? [1, 2, 3, 4, 5, 6, 0]
-      : [0, 1, 2, 3, 4, 5, 6];
+    const weekdays = this.weekStart === 'monday' ? [1, 2, 3, 4, 5, 6, 0] : [0, 1, 2, 3, 4, 5, 6];
     const monthLabel = new Intl.DateTimeFormat(this.locale, {
       month: 'long',
       year: 'numeric',
@@ -107,19 +131,30 @@ export class IntervalCalendar extends LitElement {
 
     return html`
       <div class="nav">
-        <button aria-label="Previous month" @click=${() => this.emit('month-navigate', { direction: -1 })}>‹</button>
+        <button
+          aria-label="Previous month"
+          @click=${() => this.emit('month-navigate', { direction: -1 })}
+        >
+          ‹
+        </button>
         <strong>${monthLabel}</strong>
-        <button aria-label="Next month" @click=${() => this.emit('month-navigate', { direction: 1 })}>›</button>
+        <button
+          aria-label="Next month"
+          @click=${() => this.emit('month-navigate', { direction: 1 })}
+        >
+          ›
+        </button>
       </div>
       <div class="days">
-        ${weekdays.map((weekday) => html`
-          <div class="weekday">
-            ${weekdayFormatter.format(new Date(2026, 9, 4 + weekday))}
-          </div>
-        `)}
+        ${weekdays.map(
+          (weekday) => html`
+            <div class="weekday">${weekdayFormatter.format(new Date(2026, 9, 4 + weekday))}</div>
+          `,
+        )}
         ${Array.from({ length: offset }, () => html`<span></span>`)}
         ${Array.from({ length: count }, (_, index) =>
-          this.renderDay(day(new Date(first.getFullYear(), first.getMonth(), index + 1))))}
+          this.renderDay(day(new Date(first.getFullYear(), first.getMonth(), index + 1))),
+        )}
       </div>
     `;
   }

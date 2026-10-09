@@ -107,11 +107,13 @@ Presets: yesterday/today/tomorrow; last/this/next week; last/this/next month; la
 - Update this document when implementing features or changing public API.
 
 ## Formatting convention
+
 - Prettier 3 is configured in `.prettierrc.json`.
 - Before future code commits run `npm run format`, then `npm run format:check`.
 - GitHub Actions has a formatter workflow for the feature branch; do not assume it has run without checking the workflow status.
 
 ## Reusable calendar contract
+
 - Import `src/interval-calendar.ts` to register `<interval-calendar>` without loading the full picker.
 - The calendar is presentational: its month is controlled externally, and it emits navigation intent rather than changing its own month.
 - `day-select` / `day-hover`: `event.detail.date` is a local calendar `Date`; `month-navigate`: `event.detail.direction` is -1 or 1.
