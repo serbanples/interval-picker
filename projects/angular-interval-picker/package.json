@@ -1,0 +1,11 @@
+{
+  "name": "@serbanples/angular-interval-picker",
+  "version": "0.1.0",
+  "description": "Native Angular 11 interval picker",
+  "license": "MIT",
+  "peerDependencies": {
+    "@angular/common": "^11.0.0",
+    "@angular/core": "^11.0.0",
+    "rxjs": "^6.5.0"
+  }
+}
