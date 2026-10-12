@@ -1,0 +1,19 @@
+<div class="nav">
+  <button type="button" aria-label="Previous month" (click)="monthNavigate.emit(-1)">‹</button>
+  <strong>{{ monthLabel }}</strong>
+  <button type="button" aria-label="Next month" (click)="monthNavigate.emit(1)">›</button>
+</div>
+<div class="days">
+  <div class="weekday" *ngFor="let weekday of weekdays">{{ weekday }}</div>
+  <ng-container *ngFor="let cell of cells; trackBy: trackDay">
+    <span *ngIf="!cell"></span>
+    <button *ngIf="cell" type="button" class="date"
+      [class.in-range]="cell.inRange" [class.preview]="cell.preview"
+      [class.endpoint]="cell.selected"
+      [attr.aria-label]="cell.date.toDateString()"
+      [attr.aria-pressed]="cell.selected"
+      (mouseenter)="dayHover.emit(cell.date)"
+      (focus)="dayHover.emit(cell.date)"
+      (click)="daySelect.emit(cell.date)">{{ cell.day }}</button>
+  </ng-container>
+</div>

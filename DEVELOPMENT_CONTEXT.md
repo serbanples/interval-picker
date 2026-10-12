@@ -140,3 +140,7 @@ Presets: yesterday/today/tomorrow; last/this/next week; last/this/next month; la
 - For local pre-publication testing: `npm pack` at root (Node 20), then install generated `.tgz` in the Angular 11 demo (Node 14). A regular demo `npm install` requires the package to already be published.
 - `.github/workflows/package.yml` validates formatting, TypeScript, build, pack dry-run, and expected artifacts.
 - **Important**: The environment has not been able to fetch npm dependencies or execute the build, formatting, or npm pack; do not describe this branch as tested or published until CI or local validation confirms it.
+
+## Native Angular 11 implementation
+
+Branch `feat/angular11-native-picker` introduces a completely independent Angular 11 library under `projects/angular-interval-picker`. It contains reusable `IntervalCalendarComponent`, `IntervalDatePickerComponent`, `IntervalPickerModule`, date adapters, and presets. It is built with Angular 11 `ng-packagr` and TypeScript 4.1 using Node 14. The `examples/angular11` demo now imports this native Angular module via a local `file:` dependency on `dist/angular-interval-picker`; it no longer loads the Lit custom element. See the library README for installation, building, API, and publishing. CI workflow `.github/workflows/angular11-native.yml` checks format, builds, packs, and compiles the consumer demo. Execution has not been independently verified in this chat.

@@ -1,0 +1,34 @@
+name: Native Angular 11 library
+
+on:
+  push:
+    branches: [feat/angular11-native-picker]
+  pull_request:
+    branches: [feat/angular11-integration]
+
+jobs:
+  angular11:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '14'
+      - name: Install library dependencies
+        working-directory: projects/angular-interval-picker
+        run: npm install
+      - name: Check formatting
+        working-directory: projects/angular-interval-picker
+        run: npm run format:check
+      - name: Build Angular 11 library
+        working-directory: projects/angular-interval-picker
+        run: npm run build
+      - name: Check publishable archive
+        working-directory: dist/angular-interval-picker
+        run: npm pack --dry-run
+      - name: Install Angular 11 demo
+        working-directory: examples/angular11
+        run: npm install
+      - name: Build Angular 11 demo
+        working-directory: examples/angular11
+        run: npm run build
