@@ -1,0 +1,15 @@
+{
+  "extends": "../../examples/angular11/tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../../out-tsc/lib",
+    "declaration": true,
+    "types": [],
+    "target": "es2015"
+  },
+  "angularCompilerOptions": {
+    "enableIvy": false
+  },
+  "exclude": [
+    "**/*.spec.ts"
+  ]
+}
