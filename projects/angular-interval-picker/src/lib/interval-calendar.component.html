@@ -1,0 +1,48 @@
+<div class="nav">
+  <button type="button" (click)="onPrevious()" mat-icon-button [matTooltip]="'button.previous.preview' | translate">
+    <mat-icon>chevron_left</mat-icon>
+  </button>
+  <button type="button" class="nav-label" (click)="toggleView()">
+    <strong>{{ view === 'days' ? monthLabel : pickerYear }}</strong>
+  </button>
+  <button type="button" (click)="onNext()" mat-icon-button [matTooltip]="'button.forward.preview' | translate">
+    <mat-icon>chevron_right</mat-icon>
+  </button>
+</div>
+
+<div class="days" *ngIf="view === 'days'">
+  <div class="weekday week-number-header">{{ 'weekday.WK' | translate }}</div>
+  <div class="weekday" *ngFor="let weekday of weekdays">{{ 'weekday.' + weekday + '.2' | translate }}</div>
+  <ng-container *ngFor="let cell of cells; let i = index; trackBy: trackDay">
+    <span class="week-number" *ngIf="i % 7 === 0">{{ weekNumbers[i / 7] }}</span>
+    <span *ngIf="!cell"></span>
+    <div *ngIf="cell" class="cell" [ngClass]="{
+      wrapper: cell.inRange || cell.preview,
+      'selected-start': cell.selectedStart,
+      'selected-stop': cell.selectedEnd,
+      'single-day-select': cell.singleDaySelect
+    }">
+      <button type="button" class="date"
+        [ngClass]="{ endpoint: cell.selected, isToday: cell.isToday }"
+        (mouseenter)="onDayMouseEnter(cell)"
+        (focus)="onDayMouseEnter(cell)"
+        (click)="onDayClick(cell)">
+        {{ cell.day }}
+      </button>
+    </div>
+  </ng-container>
+</div>
+
+<div class="months" *ngIf="view === 'months'">
+  <button type="button" class="month" *ngFor="let month of months"
+    [class.current]="isShownMonth(month.index)" (click)="onMonthSelect(month.index)">
+    {{ 'field.month.' + month.label | translate }}
+  </button>
+</div>
+
+<div class="years" *ngIf="view === 'years'">
+  <button type="button" class="year" *ngFor="let year of years"
+    [class.current]="isShownYear(year)" (click)="onYearSelect(year)">
+    {{ year }}
+  </button>
+</div>

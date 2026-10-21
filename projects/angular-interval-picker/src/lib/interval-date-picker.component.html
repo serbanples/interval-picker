@@ -1,0 +1,36 @@
+<div class="panel" *ngIf="open">
+  <div class="top">
+    <span>Choose view type:</span>
+    <button type="button" [class.active]="mode === 'relative'" (click)="setMode('relative')">{{ mode === 'relative' ? '✓ ' : '' }}Relative</button>
+    <button type="button" [class.active]="mode === 'fixed'" (click)="setMode('fixed')">{{ mode === 'fixed' ? '✓ ' : '' }}Fixed</button>
+    <button type="button" class="x" aria-label="Close" (click)="close()">×</button>
+  </div>
+
+  <div class="presets" *ngIf="mode === 'relative'; else fixedMode">
+    <div class="preset-row" *ngFor="let row of presetRows">
+      <button type="button" *ngFor="let item of row"
+        [class.selected]="selectedPreset === item"
+        (click)="choosePreset(item)">{{ selectedPreset === item ? '✓ ' : '' }}{{ presetLabels[item] }}</button>
+    </div>
+  </div>
+
+  <ng-template #fixedMode>
+    <div class="calendars" (mouseleave)="clearHover()">
+      <interval-calendar [month]="leftMonth" [locale]="locale" [weekStart]="weekStart"
+        [range]="draft" [previewEnd]="hoverDate" [selectingEnd]="selectingEnd"
+        (selectDate)="chooseDate($event)" (dayHover)="hover($event)"
+        (monthNavigate)="navigateDirection(0, $event)" (monthSelect)="selectMonth(0, $event)"></interval-calendar>
+      <interval-calendar [month]="rightMonth" [locale]="locale" [weekStart]="weekStart"
+        [range]="draft" [previewEnd]="hoverDate" [selectingEnd]="selectingEnd"
+        (selectDate)="chooseDate($event)" (dayHover)="hover($event)"
+        (monthNavigate)="navigateDirection(1, $event)" (monthSelect)="selectMonth(1, $event)"></interval-calendar>
+    </div>
+    <div class="summary" *ngIf="draft">Interval: {{ summary }}</div>
+  </ng-template>
+
+  <div class="actions">
+    <button type="button" (click)="close()">CLOSE</button>
+    <button type="button" class="save" *ngIf="mode === 'fixed'"
+      [disabled]="!draft || selectingEnd" (click)="save()">SAVE</button>
+  </div>
+</div>

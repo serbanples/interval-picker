@@ -1,12 +1,14 @@
-import { CUSTOM_ELEMENTS_SCHEMA, NgModule } from '@angular/core';
+import { NgModule } from '@angular/core';
 import { BrowserModule } from '@angular/platform-browser';
 import { FormsModule } from '@angular/forms';
+import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
+import { TranslateModule } from '@ngx-translate/core';
+import { IntervalPickerModule } from '@serbanples/angular-interval-picker';
 import { AppComponent } from './app.component';
 
 @NgModule({
   declarations: [AppComponent],
-  imports: [BrowserModule, FormsModule],
+  imports: [BrowserModule, BrowserAnimationsModule, FormsModule, TranslateModule.forRoot(), IntervalPickerModule],
   bootstrap: [AppComponent],
-  schemas: [CUSTOM_ELEMENTS_SCHEMA],
 })
 export class AppModule {}

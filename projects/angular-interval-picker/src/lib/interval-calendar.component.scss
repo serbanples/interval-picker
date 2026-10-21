@@ -1,0 +1,24 @@
+:host { display: block; min-width: 0; color: #40506b; font: 13px Arial, sans-serif; }
+* { box-sizing: border-box; }
+.nav { display: flex; align-items: center; justify-content: space-between; height: 29px; color: #3367d6; }
+.nav strong { font-size: 12px; text-transform: uppercase; }
+.nav button { background: none; border: 0; color: #266cc0; cursor: pointer; font-size: 19px; }
+.nav .nav-label { font-size: 12px; padding: 4px 8px; border-radius: 4px; }
+.nav .nav-label:hover { background: #f3f7ff; }
+.days { display: grid; grid-template-columns: 35px repeat(7, minmax(0, 1fr)); text-align: center; }
+.weekday { font-size: 13px; color: #8491a4; padding: 7px; }
+.week-number { display: flex; align-items: center; justify-content: center; height: 30px; font-size: 13px; color: #a8b1bf; }
+.cell { height: 30px; }
+.date { border: 0; background: transparent; height: 30px; width: 30px; color: #333; cursor: pointer; font-size: 13px; }
+.preview, .wrapper, .selected-start, .selected-stop { background: #adc2ef80; }
+.endpoint { border-radius: 50%; color: #3367d6; background: #c0d1f2; font-weight: 700; }
+.isToday { outline: 1px solid #cdcdcd; border-radius: 50%; font-weight: 600; }
+.selected-start { border-radius: 50% 0 0 50%; }
+.selected-stop { border-radius: 0 50% 50% 0; }
+.single-day-select { background: #f3f7ff; border-radius: 50%; }
+.date:hover { outline: 1px solid #3367d6; border-radius: 50%; }
+.months, .years { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-content: center; gap: 14px 6px; min-height: 210px; padding: 0 12px; }
+.month, .year { height: 30px; border: 0; border-radius: 4px; background: transparent; color: #333; font-size: 11px; text-transform: uppercase; cursor: pointer; }
+.month:hover, .year:hover { background: #e4e4e4; }
+.month.current, .year.current { background: #c0d1f2; color: #3367d6; font-weight: 700; }
+@media (max-width: 580px) { :host { width: 100%; } }
