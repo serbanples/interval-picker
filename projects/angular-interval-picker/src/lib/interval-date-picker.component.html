@@ -18,12 +18,12 @@
     <div class="calendars" (mouseleave)="clearHover()">
       <interval-calendar [month]="leftMonth" [locale]="locale" [weekStart]="weekStart"
         [range]="draft" [previewEnd]="hoverDate" [selectingEnd]="selectingEnd"
-        (daySelect)="chooseDate($event)" (dayHover)="hover($event)"
-        (monthNavigate)="navigate(0, $event)"></interval-calendar>
+        (selectDate)="chooseDate($event)" (dayHover)="hover($event)"
+        (monthNavigate)="navigateDirection(0, $event)" (monthSelect)="selectMonth(0, $event)"></interval-calendar>
       <interval-calendar [month]="rightMonth" [locale]="locale" [weekStart]="weekStart"
         [range]="draft" [previewEnd]="hoverDate" [selectingEnd]="selectingEnd"
-        (daySelect)="chooseDate($event)" (dayHover)="hover($event)"
-        (monthNavigate)="navigate(1, $event)"></interval-calendar>
+        (selectDate)="chooseDate($event)" (dayHover)="hover($event)"
+        (monthNavigate)="navigateDirection(1, $event)" (monthSelect)="selectMonth(1, $event)"></interval-calendar>
     </div>
     <div class="summary" *ngIf="draft">Interval: {{ summary }}</div>
   </ng-template>
