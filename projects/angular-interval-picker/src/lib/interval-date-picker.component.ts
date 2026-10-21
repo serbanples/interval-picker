@@ -121,6 +121,21 @@ export class IntervalDatePickerComponent<T = string> implements OnChanges {
     }
   }
 
+  navigateDirection(index: 0 | 1, direction: 'previous' | 'next'): void {
+    this.navigate(index, direction === 'previous' ? -1 : 1);
+  }
+
+  selectMonth(index: 0 | 1, date: Date): void {
+    const target = addMonths(date, 0);
+    if (index === 0) {
+      this.leftMonth = target;
+      if (target >= this.rightMonth) this.rightMonth = addMonths(target, 1);
+    } else {
+      this.rightMonth = target;
+      if (target <= this.leftMonth) this.leftMonth = addMonths(target, -1);
+    }
+  }
+
   save(preset: Preset | null = null): void {
     if (!this.draft || this.selectingEnd) return;
     const value = {
