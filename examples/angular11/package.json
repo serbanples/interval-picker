@@ -17,7 +17,10 @@
     "rxjs": "~6.6.7",
     "tslib": "^2.0.0",
     "zone.js": "~0.11.4",
-    "@serbanples/angular-interval-picker": "file:../../dist/angular-interval-picker"
+    "@serbanples/angular-interval-picker": "file:../../dist/angular-interval-picker",
+    "@angular/material": "~11.2.13",
+    "@angular/cdk": "~11.2.13",
+    "@ngx-translate/core": "~13.0.0"
   },
   "devDependencies": {
     "@angular-devkit/build-angular": "~0.1102.19",
