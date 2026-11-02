@@ -7,6 +7,9 @@ import type {
   ToggleRow,
 } from './AutomaticSetupSessionTypes'; // Adjust path; rename the supplied .js file to .ts.
 import { RowTypeEnum } from './AutomaticSetupSessionTypes';
+// npm install @fast-csv/parse cheerio@1.0.0 (Cheerio 1.0 supports Node 20)
+import { parseString } from '@fast-csv/parse';
+import { load } from 'cheerio';
 
 // A draft is deliberately partial: the source files cannot satisfy the full session type.
 type DeepPartial<T> = T extends (infer U)[] ? DeepPartial<U>[]
@@ -24,43 +27,60 @@ const put = <T extends object, K extends keyof T>(object: T, key: K, value: T[K]
   if (value !== undefined) object[key] = value;
 };
 
-/** Semicolon CSV with BOM, CRLF, quoted delimiters, escaped quotes and quoted newlines. */
-function parseCsv(input: string): Row[] {
-  const source = input.replace(/^\uFEFF/, '');
-  const records: string[][] = [];
-  let record: string[] = [], field = '', quoted = false;
-  for (let i = 0; i < source.length; i++) {
-    const char = source[i];
-    if (quoted) {
-      if (char === '"' && source[i + 1] === '"') { field += '"'; i++; }
-      else if (char === '"') quoted = false;
-      else field += char;
-    } else if (char === '"' && field === '') quoted = true;
-    else if (char === ';') { record.push(field); field = ''; }
-    else if (char === '\n' || char === '\r') {
-      if (char === '\r' && source[i + 1] === '\n') i++;
-      record.push(field); field = '';
-      if (record.some(Boolean)) records.push(record);
-      record = [];
-    } else field += char;
-  }
-  if (quoted) throw new Error('Unclosed CSV quoted field');
-  if (field || record.length) { record.push(field); records.push(record); }
-  const [headers, ...data] = records;
-  if (!headers?.includes('Interface')) throw new Error('Missing CSV Interface column');
-  return data.map(values => Object.fromEntries(headers.map((key, index) => [key, values[index] ?? ''])));
+/** Parse the semicolon export, preserving string values such as "01". */
+function parseCsv(input: string): Promise<Row[]> {
+  return new Promise((resolve, reject) => {
+    const rows: Row[] = [];
+    let hasHeaders = false;
+    const stream = parseString<Row, Row>(input.replace(/^\uFEFF/, ''), {
+      headers: true,
+      delimiter: ';',
+      ignoreEmpty: true,
+      strictColumnHandling: true,
+    });
+    stream.on('headers', (headers: string[]) => {
+      hasHeaders = headers.includes('Interface');
+      if (!hasHeaders) stream.destroy(new Error('Missing CSV Interface column'));
+    });
+    stream.on('data', (row: Row) => rows.push(row));
+    stream.on('data-invalid', () => stream.destroy(new Error('Invalid CSV column count')));
+    stream.on('error', reject);
+    stream.on('end', () => hasHeaders ? resolve(rows) : reject(new Error('Missing CSV headers')));
+  });
 }
 
-/** This exact HTML export contains a saved JSON state, independent of rendered input values. */
+/** Prefer saved state, then read serialized form values from the HTML DOM. */
 function parseHtmlFields(html: string): HtmlFields {
-  const match = html.match(/<script\b(?=[^>]*\bid=["']migration-customer-planning-data["'])[^>]*>([\s\S]*?)<\/script\s*>/i);
-  if (!match) throw new Error('Missing migration-customer-planning-data script');
-  const state: unknown = JSON.parse(match[1]);
-  if (!state || typeof state !== 'object' || !('fields' in state) ||
-      !state.fields || typeof state.fields !== 'object' || Array.isArray(state.fields)) {
-    throw new Error('Invalid HTML planning fields');
+  const $ = load(html);
+  const fields: HtmlFields = {};
+  const savedJson = $('#migration-customer-planning-data').html();
+  if (savedJson?.trim()) {
+    try {
+      const state: unknown = JSON.parse(savedJson);
+      if (state && typeof state === 'object' && 'fields' in state &&
+          state.fields && typeof state.fields === 'object' && !Array.isArray(state.fields)) {
+        Object.assign(fields, state.fields);
+      }
+    } catch {
+      // The serialized state is optional; form attributes may still contain values.
+    }
   }
-  return state.fields as HtmlFields;
+
+  $('input[id], textarea[id], select[id]').each((_, element) => {
+    const control = $(element);
+    const id = control.attr('id')!;
+    const current = fields[id];
+    if (typeof current === 'boolean' || (typeof current === 'string' && current.trim())) return;
+
+    if (control.is('input[type="checkbox"]')) {
+      // Unchecked markup may just be an empty form template, so only import checked=true.
+      if (control.is(':checked')) fields[id] = true;
+      return;
+    }
+    const value = control.val();
+    if (typeof value === 'string' && value.trim()) fields[id] = value.trim();
+  });
+  return fields;
 }
 
 function unique(rows: Row[], label: string): Row | undefined {
@@ -80,8 +100,8 @@ export interface ParseOptions {
   confirmedBmwProfile?: boolean;
 }
 
-export function parseAutomaticSetup(csv: string, html: string, options: ParseOptions = {}): SetupDraft {
-  const rows = parseCsv(csv);
+export function parseAutomaticSetup(csv: string, html: string, options: ParseOptions = {}): Promise<SetupDraft> {
+  return parseCsv(csv).then(rows => {
   const fields = parseHtmlFields(html);
   const organizationSetup: DeepPartial<OrganizationSetupType> = { general: {}, onlineComponents: {} };
   const general = organizationSetup.general!;
@@ -152,5 +172,6 @@ export function parseAutomaticSetup(csv: string, html: string, options: ParseOpt
     if (Object.keys(externalServices).length) setup.externalServices = externalServices;
     branchSetups.push(setup);
   }
-  return { organizationSetup, branchSetups };
+    return { organizationSetup, branchSetups };
+  });
 }
