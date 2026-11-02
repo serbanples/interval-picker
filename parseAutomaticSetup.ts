@@ -7,9 +7,9 @@ import type {
   ToggleRow,
 } from './AutomaticSetupSessionTypes'; // Adjust path; rename the supplied .js file to .ts.
 import { RowTypeEnum } from './AutomaticSetupSessionTypes';
-// npm install @fast-csv/parse cheerio@1.0.0 (Cheerio 1.0 supports Node 20)
+// npm install @fast-csv/parse puppeteer
 import { parseString } from '@fast-csv/parse';
-import { load } from 'cheerio';
+import type { Browser } from 'puppeteer';
 
 // A draft is deliberately partial: the source files cannot satisfy the full session type.
 type DeepPartial<T> = T extends (infer U)[] ? DeepPartial<U>[]
@@ -49,38 +49,42 @@ function parseCsv(input: string): Promise<Row[]> {
   });
 }
 
-/** Prefer saved state, then read serialized form values from the HTML DOM. */
-function parseHtmlFields(html: string): HtmlFields {
-  const $ = load(html);
-  const fields: HtmlFields = {};
-  const savedJson = $('#migration-customer-planning-data').html();
-  if (savedJson?.trim()) {
+/** Preserve explicit answers from the original JSON before page scripts can rewrite it. */
+function savedHtmlFields(html: string): HtmlFields {
+  const match = html.match(/<script\b(?=[^>]*\bid=["']migration-customer-planning-data["'])[^>]*>([\s\S]*?)<\/script\s*>/i);
+  if (match?.[1]?.trim()) {
     try {
-      const state: unknown = JSON.parse(savedJson);
+      const state: unknown = JSON.parse(match[1]);
       if (state && typeof state === 'object' && 'fields' in state &&
           state.fields && typeof state.fields === 'object' && !Array.isArray(state.fields)) {
-        Object.assign(fields, state.fields);
+        return state.fields as HtmlFields;
       }
     } catch {
-      // The serialized state is optional; form attributes may still contain values.
+      // Saved state is optional; rendered form values may still be available.
     }
   }
+  return {};
+}
 
-  $('input[id], textarea[id], select[id]').each((_, element) => {
-    const control = $(element);
-    const id = control.attr('id')!;
-    const current = fields[id];
-    if (typeof current === 'boolean' || (typeof current === 'string' && current.trim())) return;
-
-    if (control.is('input[type="checkbox"]')) {
-      // Unchecked markup may just be an empty form template, so only import checked=true.
-      if (control.is(':checked')) fields[id] = true;
-      return;
-    }
-    const value = control.val();
-    if (typeof value === 'string' && value.trim()) fields[id] = value.trim();
+/** Render the HTML in the caller's browser so its own initialization scripts can run. */
+function parseHtmlFields(html: string, browser: Browser): Promise<HtmlFields> {
+  const saved = savedHtmlFields(html);
+  return browser.newPage().then(page => {
+    return page.setContent(html, { waitUntil: 'load' }).then(() => page.evaluate(() => {
+      const fields: Record<string, string | boolean> = {};
+      document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+        'input[id], textarea[id], select[id]'
+      ).forEach(element => {
+        if (element instanceof HTMLInputElement && element.type === 'checkbox') {
+          // A default unchecked box is not evidence of an explicit "No".
+          if (element.checked) fields[element.id] = true;
+        } else if (element.value.trim()) {
+          fields[element.id] = element.value.trim();
+        }
+      });
+      return fields;
+    })).then(rendered => ({ ...saved, ...rendered })).finally(() => page.close());
   });
-  return fields;
 }
 
 function unique(rows: Row[], label: string): Row | undefined {
@@ -94,15 +98,15 @@ function option(rows: Row[], section: string, name: string, branchKey: string): 
 }
 
 export interface ParseOptions {
+  browser: Browser;
   // Supply actual supported UI choices; otherwise preferredLanguage stays absent.
   languageOptions?: string[];
   // Only if the chosen organization/profile has been confirmed outside these files.
   confirmedBmwProfile?: boolean;
 }
 
-export function parseAutomaticSetup(csv: string, html: string, options: ParseOptions = {}): Promise<SetupDraft> {
-  return parseCsv(csv).then(rows => {
-  const fields = parseHtmlFields(html);
+export function parseAutomaticSetup(csv: string, html: string, options: ParseOptions): Promise<SetupDraft> {
+  return Promise.all([parseCsv(csv), parseHtmlFields(html, options.browser)]).then(([rows, fields]) => {
   const organizationSetup: DeepPartial<OrganizationSetupType> = { general: {}, onlineComponents: {} };
   const general = organizationSetup.general!;
   put(general, 'name', text(fields.organization_name));
