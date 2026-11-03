@@ -17,6 +17,12 @@ type DeepPartial<T> = T extends (infer U)[] ? DeepPartial<U>[]
 export type SetupDraft = Pick<DeepPartial<AutomaticSetupSessionData>, 'organizationSetup' | 'branchSetups'>;
 type Row = Record<string, string>;
 type HtmlFields = Record<string, unknown>;
+export type ImportInput = string | Buffer | Uint8Array;
+
+function decodeInput(input: ImportInput): string {
+  if (typeof input === 'string') return input;
+  return Buffer.isBuffer(input) ? input.toString('utf8') : Buffer.from(input).toString('utf8');
+}
 
 const text = (value: unknown): TextRow | undefined =>
   typeof value === 'string' && value.trim() && value.trim() !== '[MASKED]'
@@ -105,8 +111,11 @@ export interface ParseOptions {
   confirmedBmwProfile?: boolean;
 }
 
-export function parseAutomaticSetup(csv: string, html: string, options: ParseOptions): Promise<SetupDraft> {
-  return Promise.all([parseCsv(csv), parseHtmlFields(html, options.browser)]).then(([rows, fields]) => {
+export function parseAutomaticSetup(csv: ImportInput, html: ImportInput, options: ParseOptions): Promise<SetupDraft> {
+  return Promise.all([
+    parseCsv(decodeInput(csv)),
+    parseHtmlFields(decodeInput(html), options.browser),
+  ]).then(([rows, fields]) => {
   const organizationSetup: DeepPartial<OrganizationSetupType> = { general: {}, onlineComponents: {} };
   const general = organizationSetup.general!;
   put(general, 'name', text(fields.organization_name));
