@@ -107,6 +107,9 @@ export interface ParseOptions {
   browser: Browser;
   // Supply actual supported UI choices; otherwise preferredLanguage stays absent.
   languageOptions?: string[];
+  // Use the country names and timezone IDs accepted by this deployment.
+  countryByCode?: Record<string, string>;
+  timezoneByLegacyKey?: Record<string, string>;
   // Only if the chosen organization/profile has been confirmed outside these files.
   confirmedBmwProfile?: boolean;
 }
@@ -143,6 +146,8 @@ export function parseAutomaticSetup(csv: ImportInput, html: ImportInput, options
     put(branchGeneral, 'zipCode', text(branch.cPLZ));
     put(branchGeneral, 'city', text(branch.cCity));
     put(branchGeneral, 'countryCode', text(branch.cCountryCode));
+    put(branchGeneral, 'country', text(options.countryByCode?.[branch.cCountryCode.trim()]));
+    put(branchGeneral, 'timezone', text(options.timezoneByLegacyKey?.[branch.lTZKey.trim()]));
     put(branchGeneral, 'webAddress', text(branch.cWebAddress));
     put(branchGeneral, 'email', text(branch.cEmail));
     put(branchGeneral, 'phone', text(branch.cTel));
@@ -152,7 +157,7 @@ export function parseAutomaticSetup(csv: ImportInput, html: ImportInput, options
       const selected: SelectRow = { type: RowTypeEnum.SELECT, value: language, options: options.languageOptions };
       branchGeneral.preferredLanguage = selected;
     }
-    // lTZKey=2 needs a verified lookup; cCounty=Bayern is a region, not a country.
+    // cCounty=Bayern is a region, not a country.
     // unitsHout/unitName are not present in either input.
 
     const dealerInfo: DeepPartial<NonNullable<BranchSetupType['dealerInfo']>> = {};
@@ -172,6 +177,10 @@ export function parseAutomaticSetup(csv: ImportInput, html: ImportInput, options
     const wheelsRows = rows.filter(r => r.Interface === 'External wheels' && r.lBranchKey === branchKey);
     if (wheelsRows.length) {
       const wheels: DeepPartial<BranchSetupType['externalServices']['xWheels']> = {};
+      const serviceIds = [...new Set(wheelsRows.map(r => r.cFullServiceID))];
+      if (serviceIds.length === 1 && /^4wheels_/i.test(serviceIds[0])) {
+        put(wheels, 'handler', text('4Wheels'));
+      }
       put(wheels, 'name', text(option(rows, 'External wheels', 'Name', branchKey)));
       put(wheels, 'baseUrl', text(option(rows, 'External wheels', 'EndpointURL', branchKey)));
       put(wheels, 'dealerNumber', text(option(rows, 'External wheels', 'DealerNumber', branchKey)));
