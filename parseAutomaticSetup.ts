@@ -1,44 +1,256 @@
-import type {
-  AutomaticSetupSessionData,
-  BranchSetupType,
-  OrganizationSetupType,
-  SelectRow,
-  TextRow,
-  ToggleRow,
-} from './AutomaticSetupSessionTypes'; // Adjust path; rename the supplied .js file to .ts.
-import { RowTypeEnum } from './AutomaticSetupSessionTypes';
-// npm install @fast-csv/parse puppeteer
+import { isDeepStrictEqual } from 'node:util';
 import { parseString } from '@fast-csv/parse';
 import type { Browser } from 'puppeteer';
+import type { AutomaticSetupSessionData } from './AutomaticSetupSessionTypes';
+import { RowTypeEnum } from './AutomaticSetupSessionTypes';
 
-// A draft is deliberately partial: the source files cannot satisfy the full session type.
-type DeepPartial<T> = T extends (infer U)[] ? DeepPartial<U>[]
-  : T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
-export type SetupDraft = Pick<DeepPartial<AutomaticSetupSessionData>, 'organizationSetup' | 'branchSetups'>;
-type Row = Record<string, string>;
-type HtmlFields = Record<string, unknown>;
 export type ImportInput = string | Buffer | Uint8Array;
+export type CsvRecord = Record<string, string>;
+type Value = string | boolean | number;
+type ObjectData = Record<string, unknown>;
 
-function decodeInput(input: ImportInput): string {
-  if (typeof input === 'string') return input;
-  return Buffer.isBuffer(input) ? input.toString('utf8') : Buffer.from(input).toString('utf8');
+export type DeepPartial<T> = T extends Date
+  ? T
+  : T extends readonly (infer U)[]
+    ? DeepPartial<U>[]
+    : T extends object
+      ? { [K in keyof T]?: DeepPartial<T[K]> }
+      : T;
+
+/** Rows become arrays of conflicting values; containers keep their structure. */
+export type ConflictData<T> = T extends { type: unknown; value: infer V }
+  ? V[]
+  : T extends Date
+    ? T[]
+    : T extends readonly (infer U)[]
+      ? ConflictData<U>[]
+      : T extends object
+        ? { [K in keyof T]?: ConflictData<T[K]> }
+        : T[];
+
+export type SetupDraft = DeepPartial<AutomaticSetupSessionData>;
+export type SetupConflictData = ConflictData<AutomaticSetupSessionData>;
+export interface SetupProcessingResult {
+  data: SetupDraft;
+  conflicts: SetupConflictData;
+}
+export type SetupMergeInput = SetupDraft | SetupProcessingResult;
+
+export interface CsvProcessingOptions {
+  /** Target slot in existing.branchSetups. No branch ID exists in the supplied type. */
+  branchIndex?: number;
+  languageOptions?: string[];
+  countryByCode?: Record<string, string>;
+  timezoneByLegacyKey?: Record<string, string>;
+  confirmedBmwProfile?: boolean;
+}
+export interface HtmlProcessingOptions {
+  browser: Browser;
+  branchIndex?: number;
+  timeoutMs?: number;
+  /** For documents that initialize asynchronously after load. */
+  waitForReady?: (page: import('puppeteer').Page) => Promise<unknown>;
+}
+export interface ParseOptions extends CsvProcessingOptions, HtmlProcessingOptions {}
+
+function decode(input: ImportInput): string {
+  return (typeof input === 'string' ? input : Buffer.from(input).toString('utf8')).replace(
+    /^\uFEFF/,
+    '',
+  );
+}
+function object(value: unknown): value is ObjectData {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+  );
+}
+function primitive(value: unknown): value is Value {
+  return (
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value))
+  );
+}
+function row(value: unknown): value is ObjectData & { type: string; value: Value } {
+  return object(value) && typeof value.type === 'string' && primitive(value.value);
+}
+function copy<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(copy) as T;
+  if (value instanceof Date) return new Date(value) as T;
+  if (object(value))
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, copy(v)])) as T;
+  return value;
+}
+function distinct(values: unknown[]): unknown[] {
+  return values.filter(
+    (value, index) => values.findIndex((other) => isDeepStrictEqual(value, other)) === index,
+  );
+}
+function defaultValue(value: unknown): Value {
+  if (typeof value === 'string') return '';
+  if (typeof value === 'boolean') return false;
+  if (typeof value === 'number') return 0;
+  throw new Error('Conflicts require string, boolean or number values');
 }
 
-const text = (value: unknown): TextRow | undefined =>
-  typeof value === 'string' && value.trim() && value.trim() !== '[MASKED]'
-    ? { type: RowTypeEnum.TEXT, value: value.trim() } : undefined;
-const toggle = (value: unknown): ToggleRow | undefined =>
-  typeof value === 'boolean' ? { type: RowTypeEnum.TOGGLE, value } : undefined;
-const put = <T extends object, K extends keyof T>(object: T, key: K, value: T[K] | undefined): void => {
-  if (value !== undefined) object[key] = value;
-};
+interface NodeInput {
+  data?: unknown;
+  conflicts?: unknown;
+}
+interface NodeResult {
+  data?: unknown;
+  conflicts?: unknown;
+}
 
-/** Parse the semicolon export, preserving string values such as "01". */
-function parseCsv(input: string): Promise<Row[]> {
+/** Recursively merge all candidates at once; never compare intermediate default values. */
+function mergeNode(nodes: NodeInput[], path: string): NodeResult {
+  const present = nodes.filter((n) => n.data !== undefined || n.conflicts !== undefined);
+  if (!present.length) return {};
+  const values = present.map((n) => n.data).filter((v) => v !== undefined);
+  const rows = values.filter(row);
+
+  if (rows.length || values.every((v) => !object(v) && !Array.isArray(v))) {
+    if (
+      rows.length &&
+      (rows.length !== values.length || rows.some((r) => r.type !== rows[0].type))
+    ) {
+      throw new Error(`Incompatible row types at ${path}`);
+    }
+    const candidates = distinct(
+      present.flatMap((n) => {
+        if (n.conflicts !== undefined) {
+          if (!Array.isArray(n.conflicts) || n.conflicts.length < 2)
+            throw new Error(`Invalid conflict history at ${path}`);
+          return n.conflicts;
+        }
+        if (n.data === undefined) return [];
+        if (row(n.data)) {
+          // Migrate the original TextRow.conflicts field into the separate conflict tree.
+          return [n.data.value, ...(Array.isArray(n.data.conflicts) ? n.data.conflicts : [])];
+        }
+        return [n.data];
+      }),
+    );
+    if (!candidates.length) return {};
+    if (candidates.some((v) => typeof v !== typeof candidates[0]))
+      throw new Error(`Incompatible value types at ${path}`);
+    const conflict = candidates.length > 1;
+    const value = conflict ? defaultValue(candidates[0]) : copy(candidates[0]);
+    let data: unknown = value;
+    if (rows.length) {
+      // Preserve existing row metadata; combine select choices without treating them as answers.
+      const metadata: ObjectData = Object.assign({}, ...rows.slice().reverse().map(copy));
+      delete metadata.conflicts; // All conflicts belong to the separate conflict tree.
+      if (rows.some((r) => Array.isArray(r.options))) {
+        metadata.options = distinct(
+          rows.flatMap((r) => (Array.isArray(r.options) ? r.options : [])),
+        );
+      }
+      data = { ...metadata, value };
+    }
+    return { data, ...(conflict ? { conflicts: copy(candidates) } : {}) };
+  }
+
+  const arrays = values.filter(Array.isArray);
+  if (arrays.length) {
+    if (arrays.length !== values.length) throw new Error(`Incompatible container types at ${path}`);
+    const data: unknown[] = [];
+    const conflicts: unknown[] = [];
+    const length = Math.max(...arrays.map((a) => a.length));
+    for (let index = 0; index < length; index++) {
+      const merged = mergeNode(
+        present.map((n) => ({
+          data: Array.isArray(n.data) ? (n.data[index] ?? undefined) : undefined,
+          conflicts: Array.isArray(n.conflicts) ? (n.conflicts[index] ?? undefined) : undefined,
+        })),
+        `${path}[${index}]`,
+      );
+      if (merged.data !== undefined) data[index] = merged.data;
+      if (merged.conflicts !== undefined) conflicts[index] = merged.conflicts;
+    }
+    return { data, ...(conflicts.length ? { conflicts } : {}) };
+  }
+
+  if (values.some((v) => !object(v))) throw new Error(`Incompatible container types at ${path}`);
+  const keys = new Set(
+    present.flatMap((n) => [
+      ...Object.keys(object(n.data) ? n.data : {}),
+      ...Object.keys(object(n.conflicts) ? n.conflicts : {}),
+    ]),
+  );
+  const data: ObjectData = {};
+  const conflicts: ObjectData = {};
+  for (const key of keys) {
+    if (['__proto__', 'constructor', 'prototype'].includes(key))
+      throw new Error(`Unsupported key at ${path}.${key}`);
+    const merged = mergeNode(
+      present.map((n) => ({
+        data: object(n.data) ? n.data[key] : undefined,
+        conflicts: object(n.conflicts) ? n.conflicts[key] : undefined,
+      })),
+      `${path}.${key}`,
+    );
+    if (merged.data !== undefined) data[key] = merged.data;
+    if (merged.conflicts !== undefined) conflicts[key] = merged.conflicts;
+  }
+  return { data, ...(Object.keys(conflicts).length ? { conflicts } : {}) };
+}
+
+/**
+ * Existing values participate equally, including explicit '', false and 0.
+ * Pass the entire previous result to preserve unresolved conflict history.
+ * Array items are matched by index. Inputs are never mutated.
+ */
+export function mergeAutomaticSetup(
+  existing: SetupMergeInput,
+  ...processed: SetupMergeInput[]
+): SetupProcessingResult {
+  const nodes = [existing, ...processed].map((input) =>
+    'data' in input && 'conflicts' in input ? (input as SetupProcessingResult) : { data: input },
+  );
+  const result = mergeNode(nodes, 'setup');
+  return {
+    data: result.data as SetupDraft,
+    conflicts: (result.conflicts ?? {}) as SetupConflictData,
+  };
+}
+
+function branchIndex(index = 0): number {
+  if (!Number.isSafeInteger(index) || index < 0)
+    throw new Error('branchIndex must be a non-negative integer');
+  return index;
+}
+function text(value: unknown): { type: RowTypeEnum.TEXT; value: string } | undefined {
+  if (typeof value !== 'string' || !value.trim() || value.trim() === '[MASKED]') return undefined;
+  return { type: RowTypeEnum.TEXT, value: value.trim() };
+}
+function toggle(value: unknown): { type: RowTypeEnum.TOGGLE; value: boolean } | undefined {
+  return typeof value === 'boolean' ? { type: RowTypeEnum.TOGGLE, value } : undefined;
+}
+function set(target: ObjectData, path: string, value: unknown): void {
+  if (value === undefined) return;
+  const parts = path.split('.');
+  let current = target;
+  parts.slice(0, -1).forEach((key) => {
+    if (!object(current[key])) current[key] = {};
+    current = current[key] as ObjectData;
+  });
+  current[parts[parts.length - 1]] = value;
+}
+function branchDraft(branch: ObjectData, index: number): SetupDraft {
+  const branchSetups: NonNullable<SetupDraft['branchSetups']> = [];
+  if (Object.keys(branch).length) branchSetups[index] = branch;
+  return branchSetups.length ? { branchSetups } : {};
+}
+
+function readCsv(input: ImportInput): Promise<CsvRecord[]> {
   return new Promise((resolve, reject) => {
-    const rows: Row[] = [];
+    const records: CsvRecord[] = [];
     let hasHeaders = false;
-    const stream = parseString<Row, Row>(input.replace(/^\uFEFF/, ''), {
+    const stream = parseString<CsvRecord, CsvRecord>(decode(input), {
       headers: true,
       delimiter: ';',
       ignoreEmpty: true,
@@ -48,152 +260,207 @@ function parseCsv(input: string): Promise<Row[]> {
       hasHeaders = headers.includes('Interface');
       if (!hasHeaders) stream.destroy(new Error('Missing CSV Interface column'));
     });
-    stream.on('data', (row: Row) => rows.push(row));
+    stream.on('data', (record) => records.push(record));
     stream.on('data-invalid', () => stream.destroy(new Error('Invalid CSV column count')));
     stream.on('error', reject);
-    stream.on('end', () => hasHeaders ? resolve(rows) : reject(new Error('Missing CSV headers')));
+    stream.on('end', () =>
+      hasHeaders ? resolve(records) : reject(new Error('Missing CSV headers')),
+    );
   });
 }
 
-/** Preserve explicit answers from the original JSON before page scripts can rewrite it. */
-function savedHtmlFields(html: string): HtmlFields {
-  const match = html.match(/<script\b(?=[^>]*\bid=["']migration-customer-planning-data["'])[^>]*>([\s\S]*?)<\/script\s*>/i);
-  if (match?.[1]?.trim()) {
-    try {
-      const state: unknown = JSON.parse(match[1]);
-      if (state && typeof state === 'object' && 'fields' in state &&
-          state.fields && typeof state.fields === 'object' && !Array.isArray(state.fields)) {
-        return state.fields as HtmlFields;
-      }
-    } catch {
-      // Saved state is optional; rendered form values may still be available.
-    }
-  }
-  return {};
-}
+const BRANCH_FIELDS = {
+  cName: 'name',
+  cDisplayName: 'displayName',
+  cFirma: 'firma',
+  cPLZ: 'zipCode',
+  cCity: 'city',
+  cCountryCode: 'countryCode',
+  cWebAddress: 'webAddress',
+  cEmail: 'email',
+  cTel: 'phone',
+  cOpeningHours: 'openingHours',
+} as const;
+const DMS_FIELDS = {
+  DistributionPartnerNumber: 'dealerNumber',
+  OutletNumber: 'outlerNumber',
+  Firm: 'dmsCompanyNumber',
+  Branch: 'dmsBranchNumber',
+} as const;
+const WHEEL_FIELDS = {
+  Name: 'name',
+  EndpointURL: 'baseUrl',
+  DealerNumber: 'dealerNumber',
+  QueryPackageSize: 'queryPackageSize',
+} as const;
 
-/** Render the HTML in the caller's browser so its own initialization scripts can run. */
-function parseHtmlFields(html: string, browser: Browser): Promise<HtmlFields> {
-  const saved = savedHtmlFields(html);
-  return browser.newPage().then(page => {
-    return page.setContent(html, { waitUntil: 'load' }).then(() => page.evaluate(() => {
-      const fields: Record<string, string | boolean> = {};
-      document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
-        'input[id], textarea[id], select[id]'
-      ).forEach(element => {
-        if (element instanceof HTMLInputElement && element.type === 'checkbox') {
-          // A default unchecked box is not evidence of an explicit "No".
-          if (element.checked) fields[element.id] = true;
-        } else if (element.value.trim()) {
-          fields[element.id] = element.value.trim();
-        }
-      });
-      return fields;
-    })).then(rendered => ({ ...saved, ...rendered })).finally(() => page.close());
-  });
-}
-
-function unique(rows: Row[], label: string): Row | undefined {
-  if (rows.length > 1) throw new Error(`Ambiguous ${label}: ${rows.length} rows`);
-  return rows[0];
-}
-function option(rows: Row[], section: string, name: string, branchKey: string): string | undefined {
-  const row = unique(rows.filter(r => r.Interface === section && r.cOptionID === name &&
-    r.lBranchKey === branchKey), `${section}.${name} for branch ${branchKey}`);
-  return text(row?.cValue)?.value;
-}
-
-export interface ParseOptions {
-  browser: Browser;
-  // Supply actual supported UI choices; otherwise preferredLanguage stays absent.
-  languageOptions?: string[];
-  // Use the country names and timezone IDs accepted by this deployment.
-  countryByCode?: Record<string, string>;
-  timezoneByLegacyKey?: Record<string, string>;
-  // Only if the chosen organization/profile has been confirmed outside these files.
-  confirmedBmwProfile?: boolean;
-}
-
-export function parseAutomaticSetup(csv: ImportInput, html: ImportInput, options: ParseOptions): Promise<SetupDraft> {
-  return Promise.all([
-    parseCsv(decodeInput(csv)),
-    parseHtmlFields(decodeInput(html), options.browser),
-  ]).then(([rows, fields]) => {
-  const organizationSetup: DeepPartial<OrganizationSetupType> = { general: {}, onlineComponents: {} };
-  const general = organizationSetup.general!;
-  put(general, 'name', text(fields.organization_name));
-  put(general, 'worldName', text(fields.world_name));
-  if (options.confirmedBmwProfile === true) put(general, 'bmw', toggle(true));
-
-  const online = organizationSetup.onlineComponents!;
-  put(online, 'softDrop', toggle(fields.component_soft_drop));
-  put(online, 'softCheckout', toggle(fields.component_soft_drop_checkout));
-  put(online, 'softChat', toggle(fields.component_soft_chat));
-  put(online, 'softConfirm', toggle(fields.component_soft_confirm));
-  put(online, 'softAnalytics', toggle(fields.component_soft_analytics));
-
-  const branchRows = rows.filter(r => r.Interface === 'Branches');
-  // A single planning form does not identify multiple branches. Reject ambiguity.
-  if (branchRows.length > 1) throw new Error('Multiple branches: select the target branch explicitly');
-  const branch = branchRows[0];
-  const branchSetups: DeepPartial<BranchSetupType>[] = [];
-  if (branch) {
-    const branchKey = branch.lBranchKey;
-    const branchGeneral: DeepPartial<BranchSetupType['general']> = {};
-    put(branchGeneral, 'name', text(branch.cName));
-    put(branchGeneral, 'displayName', text(branch.cDisplayName));
-    put(branchGeneral, 'firma', text(branch.cFirma));
-    put(branchGeneral, 'zipCode', text(branch.cPLZ));
-    put(branchGeneral, 'city', text(branch.cCity));
-    put(branchGeneral, 'countryCode', text(branch.cCountryCode));
-    put(branchGeneral, 'country', text(options.countryByCode?.[branch.cCountryCode.trim()]));
-    put(branchGeneral, 'timezone', text(options.timezoneByLegacyKey?.[branch.lTZKey.trim()]));
-    put(branchGeneral, 'webAddress', text(branch.cWebAddress));
-    put(branchGeneral, 'email', text(branch.cEmail));
-    put(branchGeneral, 'phone', text(branch.cTel));
-    put(branchGeneral, 'openingHours', text(branch.cOpeningHours));
-    const language = text(branch.cPreferredLangID)?.value;
+/** Also accepts the already parsed JSON export, without reparsing CSV. */
+export function processParsedCsv(
+  records: readonly CsvRecord[],
+  options: CsvProcessingOptions = {},
+): SetupProcessingResult {
+  const index = branchIndex(options.branchIndex);
+  const masters = records.filter((r) => r.Interface === 'Branches');
+  const keys = new Set(masters.map((r) => r.lBranchKey));
+  if (keys.size > 1) throw new Error('Multiple branches: select one branch before processing');
+  const profile: SetupDraft =
+    options.confirmedBmwProfile === true
+      ? { organizationSetup: { general: { bmw: toggle(true) } } }
+      : {};
+  if (!masters.length) return { data: profile, conflicts: {} };
+  const key = masters[0].lBranchKey;
+  if (!key?.trim()) throw new Error('Missing legacy branch key');
+  const drafts: SetupDraft[] = masters.map((master) => {
+    const branch: ObjectData = {};
+    Object.entries(BRANCH_FIELDS).forEach(([source, target]) =>
+      set(branch, `general.${target}`, text(master[source])),
+    );
+    set(branch, 'general.country', text(options.countryByCode?.[master.cCountryCode?.trim()]));
+    set(branch, 'general.timezone', text(options.timezoneByLegacyKey?.[master.lTZKey?.trim()]));
+    set(branch, 'dealerInfo.dealerName', text(master.cFirma));
+    const language = master.cPreferredLangID?.trim();
     if (language && options.languageOptions?.includes(language)) {
-      const selected: SelectRow = { type: RowTypeEnum.SELECT, value: language, options: options.languageOptions };
-      branchGeneral.preferredLanguage = selected;
+      set(branch, 'general.preferredLanguage', {
+        type: RowTypeEnum.SELECT,
+        value: language,
+        options: [...options.languageOptions],
+      });
     }
-    // cCounty=Bayern is a region, not a country.
-    // unitsHout/unitName are not present in either input.
-
-    const dealerInfo: DeepPartial<NonNullable<BranchSetupType['dealerInfo']>> = {};
-    put(dealerInfo, 'dealerName', text(branch.cFirma));
-    put(dealerInfo, 'dealerNumber', text(option(rows, 'DMS parameters', 'DistributionPartnerNumber', branchKey)
-      ?? fields.dealer_number));
-    put(dealerInfo, 'outlerNumber', text(option(rows, 'DMS parameters', 'OutletNumber', branchKey)
-      ?? fields.business_location_number));
-    put(dealerInfo, 'dms', text(fields.dms_name));
-    put(dealerInfo, 'dmsCompanyNumber', text(option(rows, 'DMS parameters', 'Firm', branchKey)
-      ?? fields.dms_company));
-    put(dealerInfo, 'dmsBranchNumber', text(option(rows, 'DMS parameters', 'Branch', branchKey)
-      ?? fields.dms_branch));
-    put(dealerInfo, 'dmsIP', text(fields.dms_ip)); // Empty in this sample: stays absent.
-
-    const externalServices: DeepPartial<BranchSetupType['externalServices']> = {};
-    const wheelsRows = rows.filter(r => r.Interface === 'External wheels' && r.lBranchKey === branchKey);
-    if (wheelsRows.length) {
-      const wheels: DeepPartial<BranchSetupType['externalServices']['xWheels']> = {};
-      const serviceIds = [...new Set(wheelsRows.map(r => r.cFullServiceID))];
-      if (serviceIds.length === 1 && /^4wheels_/i.test(serviceIds[0])) {
-        put(wheels, 'handler', text('4Wheels'));
-      }
-      put(wheels, 'name', text(option(rows, 'External wheels', 'Name', branchKey)));
-      put(wheels, 'baseUrl', text(option(rows, 'External wheels', 'EndpointURL', branchKey)));
-      put(wheels, 'dealerNumber', text(option(rows, 'External wheels', 'DealerNumber', branchKey)));
-      put(wheels, 'queryPackageSize', text(option(rows, 'External wheels', 'QueryPackageSize', branchKey)));
-      const active = option(rows, 'External wheels', 'Active', branchKey);
-      if (active === '1' || active === '0') put(wheels, 'enabled', toggle(active === '1'));
-      if (Object.keys(wheels).length) externalServices.xWheels = wheels;
-    }
-    const setup: DeepPartial<BranchSetupType> = { general: branchGeneral };
-    if (Object.keys(dealerInfo).length) setup.dealerInfo = dealerInfo;
-    if (Object.keys(externalServices).length) setup.externalServices = externalServices;
-    branchSetups.push(setup);
-  }
-    return { organizationSetup, branchSetups };
+    return branchDraft(branch, index);
   });
+  const wheels = records.filter((r) => r.Interface === 'External wheels' && r.lBranchKey === key);
+  if (new Set(wheels.map((r) => r.cFullServiceID)).size > 1)
+    throw new Error('Multiple wheel services cannot fit one xWheels slot');
+  records
+    .filter((r) => r.lBranchKey === key)
+    .forEach((record) => {
+      const branch: ObjectData = {};
+      if (record.Interface === 'DMS parameters') {
+        const target = Object.prototype.hasOwnProperty.call(DMS_FIELDS, record.cOptionID)
+          ? DMS_FIELDS[record.cOptionID as keyof typeof DMS_FIELDS]
+          : undefined;
+        if (target) set(branch, `dealerInfo.${target}`, text(record.cValue));
+      }
+      if (record.Interface === 'External wheels') {
+        const target = Object.prototype.hasOwnProperty.call(WHEEL_FIELDS, record.cOptionID)
+          ? WHEEL_FIELDS[record.cOptionID as keyof typeof WHEEL_FIELDS]
+          : undefined;
+        if (target) set(branch, `externalServices.xWheels.${target}`, text(record.cValue));
+        if (/^4wheels_/i.test(record.cFullServiceID))
+          set(branch, 'externalServices.xWheels.handler', text('4Wheels'));
+        if (record.cOptionID === 'Active' && ['0', '1'].includes(record.cValue)) {
+          set(branch, 'externalServices.xWheels.enabled', toggle(record.cValue === '1'));
+        }
+      }
+      drafts.push(branchDraft(branch, index));
+    });
+  return mergeAutomaticSetup(profile, ...drafts);
+}
+
+export function processCsv(
+  input: ImportInput,
+  options: CsvProcessingOptions = {},
+): Promise<SetupProcessingResult> {
+  return readCsv(input).then((records) => processParsedCsv(records, options));
+}
+
+const HTML_FIELDS = {
+  dealer_name: ['general.firma', 'dealerInfo.dealerName'],
+  dealer_number: ['dealerInfo.dealerNumber'],
+  business_location_number: ['dealerInfo.outlerNumber'],
+  dms_name: ['dealerInfo.dms'],
+  dms_company: ['dealerInfo.dmsCompanyNumber'],
+  dms_branch: ['dealerInfo.dmsBranchNumber'],
+  dms_ip: ['dealerInfo.dmsIP'],
+} as const;
+const ONLINE_FIELDS = {
+  component_soft_drop: 'softDrop',
+  component_soft_drop_checkout: 'softCheckout',
+  component_soft_chat: 'softChat',
+  component_soft_confirm: 'softConfirm',
+  component_soft_analytics: 'softAnalytics',
+} as const;
+function mapHtml(fields: ObjectData, index: number): SetupDraft {
+  const organization: ObjectData = {};
+  set(organization, 'general.name', text(fields.organization_name));
+  set(organization, 'general.worldName', text(fields.world_name));
+  Object.entries(ONLINE_FIELDS).forEach(([source, target]) =>
+    set(organization, `onlineComponents.${target}`, toggle(fields[source])),
+  );
+  const branch: ObjectData = {};
+  Object.entries(HTML_FIELDS).forEach(([source, targets]) =>
+    targets.forEach((target) => set(branch, target, text(fields[source]))),
+  );
+  return {
+    ...(Object.keys(organization).length ? { organizationSetup: organization } : {}),
+    ...branchDraft(branch, index),
+  };
+}
+
+/** Reads the original script and live DOM independently so differences are retained. */
+export function processHtml(
+  input: ImportInput,
+  options: HtmlProcessingOptions,
+): Promise<SetupProcessingResult> {
+  const index = branchIndex(options.branchIndex);
+  return options.browser.newPage().then((page) => {
+    const html = decode(input);
+    return page
+      .setContent(html, { waitUntil: 'load', timeout: options.timeoutMs ?? 30000 })
+      .then(() => options.waitForReady?.(page))
+      .then(() =>
+        page.evaluate((original) => {
+          let saved: Record<string, unknown> = {};
+          const originalDocument = new DOMParser().parseFromString(original, 'text/html');
+          try {
+            const parsed = JSON.parse(
+              originalDocument.getElementById('migration-customer-planning-data')?.textContent ??
+                '{}',
+            );
+            if (
+              parsed?.fields &&
+              typeof parsed.fields === 'object' &&
+              !Array.isArray(parsed.fields)
+            )
+              saved = parsed.fields;
+          } catch {
+            /* Optional saved state: continue with DOM values. */
+          }
+          const rendered: Record<string, unknown> = {};
+          document
+            .querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+              'input[id], textarea[id], select[id]',
+            )
+            .forEach((element) => {
+              if (element instanceof HTMLInputElement && element.type === 'checkbox') {
+                // False is reliable when the original saved state explicitly answered this field.
+                if (element.checked || typeof saved[element.id] === 'boolean')
+                  rendered[element.id] = element.checked;
+              } else if (
+                !(element instanceof HTMLInputElement && element.type === 'radio') ||
+                element.checked
+              ) {
+                if (element.value.trim()) rendered[element.id] = element.value.trim();
+              }
+            });
+          return { saved, rendered };
+        }, html),
+      )
+      .then(({ saved, rendered }) =>
+        mergeAutomaticSetup({}, mapHtml(saved, index), mapHtml(rendered, index)),
+      )
+      .finally(() => page.close());
+  });
+}
+
+/** Convenience wrapper. The return value is now { data, conflicts }. */
+export function parseAutomaticSetup(
+  csv: ImportInput,
+  html: ImportInput,
+  options: ParseOptions,
+  existing: SetupMergeInput = {},
+): Promise<SetupProcessingResult> {
+  return Promise.all([processCsv(csv, options), processHtml(html, options)]).then((results) =>
+    mergeAutomaticSetup(existing, ...results),
+  );
 }
