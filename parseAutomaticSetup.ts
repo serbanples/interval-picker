@@ -2,12 +2,21 @@ import { isDeepStrictEqual } from 'node:util';
 import { parseString } from '@fast-csv/parse';
 import type { Browser } from 'puppeteer';
 import type { AutomaticSetupSessionData } from './AutomaticSetupSessionTypes';
-import { RowTypeEnum } from './AutomaticSetupSessionTypes';
 
 export type ImportInput = string | Buffer | Uint8Array;
 export type CsvRecord = Record<string, string>;
 type Value = string | boolean | number;
 type ObjectData = Record<string, unknown>;
+
+export type PlainValues<T> = T extends { type: unknown; value: infer V }
+  ? V
+  : T extends Date
+    ? T
+    : T extends readonly (infer U)[]
+      ? PlainValues<U>[]
+      : T extends object
+        ? { [K in keyof T]: PlainValues<T[K]> }
+        : T;
 
 export type DeepPartial<T> = T extends Date
   ? T
@@ -17,19 +26,17 @@ export type DeepPartial<T> = T extends Date
       ? { [K in keyof T]?: DeepPartial<T[K]> }
       : T;
 
-/** Rows become arrays of conflicting values; containers keep their structure. */
-export type ConflictData<T> = T extends { type: unknown; value: infer V }
-  ? V[]
-  : T extends Date
-    ? T[]
-    : T extends readonly (infer U)[]
-      ? ConflictData<U>[]
-      : T extends object
-        ? { [K in keyof T]?: ConflictData<T[K]> }
-        : T[];
+/** Each conflicting leaf is an array of distinct plain values. */
+export type ConflictData<T> = T extends Date
+  ? T[]
+  : T extends readonly (infer U)[]
+    ? ConflictData<U>[]
+    : T extends object
+      ? { [K in keyof T]?: ConflictData<T[K]> }
+      : T[];
 
-export type SetupDraft = DeepPartial<AutomaticSetupSessionData>;
-export type SetupConflictData = ConflictData<AutomaticSetupSessionData>;
+export type SetupDraft = DeepPartial<PlainValues<AutomaticSetupSessionData>>;
+export type SetupConflictData = ConflictData<PlainValues<AutomaticSetupSessionData>>;
 export interface SetupProcessingResult {
   data: SetupDraft;
   conflicts: SetupConflictData;
@@ -67,16 +74,6 @@ function object(value: unknown): value is ObjectData {
     (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
   );
 }
-function primitive(value: unknown): value is Value {
-  return (
-    typeof value === 'string' ||
-    typeof value === 'boolean' ||
-    (typeof value === 'number' && Number.isFinite(value))
-  );
-}
-function row(value: unknown): value is ObjectData & { type: string; value: Value } {
-  return object(value) && typeof value.type === 'string' && primitive(value.value);
-}
 function copy<T>(value: T): T {
   if (Array.isArray(value)) return value.map(copy) as T;
   if (value instanceof Date) return new Date(value) as T;
@@ -110,15 +107,7 @@ function mergeNode(nodes: NodeInput[], path: string): NodeResult {
   const present = nodes.filter((n) => n.data !== undefined || n.conflicts !== undefined);
   if (!present.length) return {};
   const values = present.map((n) => n.data).filter((v) => v !== undefined);
-  const rows = values.filter(row);
-
-  if (rows.length || values.every((v) => !object(v) && !Array.isArray(v))) {
-    if (
-      rows.length &&
-      (rows.length !== values.length || rows.some((r) => r.type !== rows[0].type))
-    ) {
-      throw new Error(`Incompatible row types at ${path}`);
-    }
+  if (values.every((v) => !object(v) && !Array.isArray(v))) {
     const candidates = distinct(
       present.flatMap((n) => {
         if (n.conflicts !== undefined) {
@@ -126,12 +115,7 @@ function mergeNode(nodes: NodeInput[], path: string): NodeResult {
             throw new Error(`Invalid conflict history at ${path}`);
           return n.conflicts;
         }
-        if (n.data === undefined) return [];
-        if (row(n.data)) {
-          // Migrate the original TextRow.conflicts field into the separate conflict tree.
-          return [n.data.value, ...(Array.isArray(n.data.conflicts) ? n.data.conflicts : [])];
-        }
-        return [n.data];
+        return n.data === undefined ? [] : [n.data];
       }),
     );
     if (!candidates.length) return {};
@@ -139,19 +123,7 @@ function mergeNode(nodes: NodeInput[], path: string): NodeResult {
       throw new Error(`Incompatible value types at ${path}`);
     const conflict = candidates.length > 1;
     const value = conflict ? defaultValue(candidates[0]) : copy(candidates[0]);
-    let data: unknown = value;
-    if (rows.length) {
-      // Preserve existing row metadata; combine select choices without treating them as answers.
-      const metadata: ObjectData = Object.assign({}, ...rows.slice().reverse().map(copy));
-      delete metadata.conflicts; // All conflicts belong to the separate conflict tree.
-      if (rows.some((r) => Array.isArray(r.options))) {
-        metadata.options = distinct(
-          rows.flatMap((r) => (Array.isArray(r.options) ? r.options : [])),
-        );
-      }
-      data = { ...metadata, value };
-    }
-    return { data, ...(conflict ? { conflicts: copy(candidates) } : {}) };
+    return { data: value, ...(conflict ? { conflicts: copy(candidates) } : {}) };
   }
 
   const arrays = values.filter(Array.isArray);
@@ -223,12 +195,12 @@ function branchIndex(index = 0): number {
     throw new Error('branchIndex must be a non-negative integer');
   return index;
 }
-function text(value: unknown): { type: RowTypeEnum.TEXT; value: string } | undefined {
+function text(value: unknown): string | undefined {
   if (typeof value !== 'string' || !value.trim() || value.trim() === '[MASKED]') return undefined;
-  return { type: RowTypeEnum.TEXT, value: value.trim() };
+  return value.trim();
 }
-function toggle(value: unknown): { type: RowTypeEnum.TOGGLE; value: boolean } | undefined {
-  return typeof value === 'boolean' ? { type: RowTypeEnum.TOGGLE, value } : undefined;
+function toggle(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
 }
 function set(target: ObjectData, path: string, value: unknown): void {
   if (value === undefined) return;
@@ -320,11 +292,7 @@ export function processParsedCsv(
     set(branch, 'dealerInfo.dealerName', text(master.cFirma));
     const language = master.cPreferredLangID?.trim();
     if (language && options.languageOptions?.includes(language)) {
-      set(branch, 'general.preferredLanguage', {
-        type: RowTypeEnum.SELECT,
-        value: language,
-        options: [...options.languageOptions],
-      });
+      set(branch, 'general.preferredLanguage', language);
     }
     return branchDraft(branch, index);
   });
@@ -397,7 +365,7 @@ function mapHtml(fields: ObjectData, index: number): SetupDraft {
   };
 }
 
-/** Reads the original script and live DOM independently so differences are retained. */
+/** Reads the form state after the page has initialized. */
 export function processHtml(
   input: ImportInput,
   options: HtmlProcessingOptions,
@@ -409,46 +377,26 @@ export function processHtml(
       .setContent(html, { waitUntil: 'load', timeout: options.timeoutMs ?? 30000 })
       .then(() => options.waitForReady?.(page))
       .then(() =>
-        page.evaluate((original) => {
-          let saved: Record<string, unknown> = {};
-          const originalDocument = new DOMParser().parseFromString(original, 'text/html');
-          try {
-            const parsed = JSON.parse(
-              originalDocument.getElementById('migration-customer-planning-data')?.textContent ??
-                '{}',
-            );
-            if (
-              parsed?.fields &&
-              typeof parsed.fields === 'object' &&
-              !Array.isArray(parsed.fields)
-            )
-              saved = parsed.fields;
-          } catch {
-            /* Optional saved state: continue with DOM values. */
-          }
-          const rendered: Record<string, unknown> = {};
+        page.evaluate(() => {
+          const fields: Record<string, string | boolean> = {};
           document
             .querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
               'input[id], textarea[id], select[id]',
             )
             .forEach((element) => {
               if (element instanceof HTMLInputElement && element.type === 'checkbox') {
-                // False is reliable when the original saved state explicitly answered this field.
-                if (element.checked || typeof saved[element.id] === 'boolean')
-                  rendered[element.id] = element.checked;
+                fields[element.id] = element.checked;
               } else if (
                 !(element instanceof HTMLInputElement && element.type === 'radio') ||
                 element.checked
               ) {
-                if (element.value.trim()) rendered[element.id] = element.value.trim();
+                if (element.value.trim()) fields[element.id] = element.value.trim();
               }
             });
-          return { saved, rendered };
-        }, html),
+          return fields;
+        }),
       )
-      .then(({ saved, rendered }) =>
-        mergeAutomaticSetup({}, mapHtml(saved, index), mapHtml(rendered, index)),
-      )
+      .then((fields) => ({ data: mapHtml(fields, index), conflicts: {} }))
       .finally(() => page.close());
   });
 }
