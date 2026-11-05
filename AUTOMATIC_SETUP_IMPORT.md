@@ -22,6 +22,13 @@ There is one empty branch by default. With `branchIndex: n`, every slot through 
 is initialized with a complete branch, and the imported values go into slot `n`.
 Each branch and service is a separate object.
 
+The processors start with `createEmptySetupData(branchCount)` and assign values directly
+to its fields. Use your existing defaults factory at this import boundary; it must return
+fresh objects and initialize the requested number of branches. No path setter or row-value
+conversion is used. Source strings are trimmed once before mapping, and blank or masked
+values leave the defaults untouched. Presence paths are recorded alongside assignments
+so actual `false` values still participate in conflicts.
+
 ```ts
 Promise.all([
   processCsv(csvBuffer),

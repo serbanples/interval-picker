@@ -122,3 +122,84 @@ test('sparse branch slots and partial file metadata get complete defaults', () =
   assert.deepEqual(result.data.files, [{ name: 'input.csv', url: '', fileHash: '', type: '' }]);
   assert.deepEqual(result.conflicts, {});
 });
+
+test('direct CSV assignments preserve mapping, duplicate conflicts and missing-value rules', () => {
+  const result = processParsedCsv(
+    [
+      {
+        Interface: 'Branches',
+        lBranchKey: '1',
+        cName: ' First ',
+        cFirma: 'Dealer',
+        cPLZ: '00123',
+        cCity: '[MASKED]',
+        cCountryCode: 'RO',
+        cPreferredLangID: 'ro',
+        lTZKey: 'EET',
+      },
+      { Interface: 'Branches', lBranchKey: '1', cName: 'Second', cTel: '  ' },
+      {
+        Interface: 'DMS parameters',
+        lBranchKey: '1',
+        cOptionID: 'DistributionPartnerNumber',
+        cValue: '0001',
+      },
+      { Interface: 'DMS parameters', lBranchKey: '1', cOptionID: 'OutletNumber', cValue: '0002' },
+      { Interface: 'DMS parameters', lBranchKey: '1', cOptionID: 'Firm', cValue: '0003' },
+      { Interface: 'DMS parameters', lBranchKey: '1', cOptionID: 'Branch', cValue: '0004' },
+      ...Object.entries({
+        Name: 'Wheels',
+        EndpointURL: 'https://example.test',
+        DealerNumber: '0005',
+        QueryPackageSize: '100',
+        Active: '0',
+      }).map(([cOptionID, cValue]) => ({
+        Interface: 'External wheels',
+        lBranchKey: '1',
+        cFullServiceID: '4wheels_test',
+        cOptionID,
+        cValue,
+      })),
+    ],
+    {
+      confirmedBmwProfile: true,
+      countryByCode: { RO: 'Romania' },
+      timezoneByLegacyKey: { EET: 'Europe/Bucharest' },
+      languageOptions: ['ro'],
+    },
+  );
+  const branch = result.data.branchSetups[0];
+  assert.equal(branch.general.name, '');
+  assert.deepEqual(result.conflicts.branchSetups?.[0]?.general?.name, ['First', 'Second']);
+  assert.equal(branch.general.zipCode, '00123');
+  assert.equal(branch.general.country, 'Romania');
+  assert.equal(branch.general.timezone, 'Europe/Bucharest');
+  assert.equal(branch.general.preferredLanguage, 'ro');
+  assert.equal(result.data.organizationSetup.general.bmw, true);
+  assert.deepEqual(branch.dealerInfo, {
+    dealerName: 'Dealer',
+    dealerNumber: '0001',
+    outlerNumber: '0002',
+    dms: '',
+    dmsCompanyNumber: '0003',
+    dmsIP: '',
+    dmsBranchNumber: '0004',
+  });
+  const service = branch.externalServices.xWheels;
+  assert.equal(service.name, 'Wheels');
+  assert.equal(service.baseUrl, 'https://example.test');
+  assert.equal(service.dealerNumber, '0005');
+  assert.equal(service.queryPackageSize, '100');
+  assert.equal(service.handler, '4Wheels');
+  assert.equal(service.enabled, false);
+  assert.ok(
+    result.providedPaths.some(
+      (path) => path.join('.') === 'branchSetups.0.externalServices.xWheels.enabled',
+    ),
+  );
+  assert.ok(
+    !result.providedPaths.some((path) =>
+      ['branchSetups.0.general.city', 'branchSetups.0.general.phone'].includes(path.join('.')),
+    ),
+  );
+});

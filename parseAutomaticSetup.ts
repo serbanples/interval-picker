@@ -254,29 +254,6 @@ function branchIndex(index = 0): number {
     throw new Error('branchIndex must be a non-negative integer');
   return index;
 }
-function text(value: unknown): string | undefined {
-  if (typeof value !== 'string' || !value.trim() || value.trim() === '[MASKED]') return undefined;
-  return value.trim();
-}
-function toggle(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined;
-}
-function set(target: ObjectData, path: string, value: unknown): void {
-  if (value === undefined) return;
-  const parts = path.split('.');
-  let current = target;
-  parts.slice(0, -1).forEach((key) => {
-    if (!object(current[key])) current[key] = {};
-    current = current[key] as ObjectData;
-  });
-  current[parts[parts.length - 1]] = value;
-}
-function branchDraft(branch: ObjectData, index: number): SetupDraft {
-  const branchSetups: NonNullable<SetupDraft['branchSetups']> = [];
-  branchSetups[index] = branch;
-  return { branchSetups };
-}
-
 function readCsv(input: ImportInput): Promise<CsvRecord[]> {
   return new Promise((resolve, reject) => {
     const records: CsvRecord[] = [];
@@ -300,88 +277,188 @@ function readCsv(input: ImportInput): Promise<CsvRecord[]> {
   });
 }
 
-const BRANCH_FIELDS = {
-  cName: 'name',
-  cDisplayName: 'displayName',
-  cFirma: 'firma',
-  cPLZ: 'zipCode',
-  cCity: 'city',
-  cCountryCode: 'countryCode',
-  cWebAddress: 'webAddress',
-  cEmail: 'email',
-  cTel: 'phone',
-  cOpeningHours: 'openingHours',
-} as const;
-const DMS_FIELDS = {
-  DistributionPartnerNumber: 'dealerNumber',
-  OutletNumber: 'outlerNumber',
-  Firm: 'dmsCompanyNumber',
-  Branch: 'dmsBranchNumber',
-} as const;
-const WHEEL_FIELDS = {
-  Name: 'name',
-  EndpointURL: 'baseUrl',
-  DealerNumber: 'dealerNumber',
-  QueryPackageSize: 'queryPackageSize',
-} as const;
-
 /** Also accepts the already parsed JSON export, without reparsing CSV. */
 export function processParsedCsv(
   records: readonly CsvRecord[],
   options: CsvProcessingOptions = {},
 ): SetupProcessingResult {
   const index = branchIndex(options.branchIndex);
-  const masters = records.filter((r) => r.Interface === 'Branches');
-  const keys = new Set(masters.map((r) => r.lBranchKey));
-  if (keys.size > 1) throw new Error('Multiple branches: select one branch before processing');
-  const profile: SetupDraft =
-    options.confirmedBmwProfile === true
-      ? { organizationSetup: { general: { bmw: toggle(true) } } }
-      : {};
-  if (!masters.length) return mergeAutomaticSetup(profile, branchDraft({}, index));
+  // Normalize source strings once; blank and masked cells leave the defaults untouched.
+  const rows = records.map(
+    (record) =>
+      Object.fromEntries(
+        Object.entries(record)
+          .map(([key, value]) => [key, value.trim()])
+          .filter(([, value]) => value !== '' && value !== '[MASKED]'),
+      ) as CsvRecord,
+  );
+  const masters = rows.filter((record) => record.Interface === 'Branches');
+  if (new Set(masters.map((record) => record.lBranchKey)).size > 1)
+    throw new Error('Multiple branches: select one branch before processing');
+
+  const profile: SetupProcessingResult = {
+    data: createEmptySetupData(index + 1),
+    conflicts: {},
+    providedPaths: [],
+  };
+  if (options.confirmedBmwProfile === true) {
+    profile.data.organizationSetup.general.bmw = true;
+    profile.providedPaths.push(['organizationSetup', 'general', 'bmw']);
+  }
+  if (!masters.length) return profile;
   const key = masters[0].lBranchKey;
-  if (!key?.trim()) throw new Error('Missing legacy branch key');
-  const drafts: SetupDraft[] = masters.map((master) => {
-    const branch: ObjectData = {};
-    Object.entries(BRANCH_FIELDS).forEach(([source, target]) =>
-      set(branch, `general.${target}`, text(master[source])),
-    );
-    set(branch, 'general.country', text(options.countryByCode?.[master.cCountryCode?.trim()]));
-    set(branch, 'general.timezone', text(options.timezoneByLegacyKey?.[master.lTZKey?.trim()]));
-    set(branch, 'dealerInfo.dealerName', text(master.cFirma));
-    const language = master.cPreferredLangID?.trim();
-    if (language && options.languageOptions?.includes(language)) {
-      set(branch, 'general.preferredLanguage', language);
-    }
-    return branchDraft(branch, index);
-  });
-  const wheels = records.filter((r) => r.Interface === 'External wheels' && r.lBranchKey === key);
-  if (new Set(wheels.map((r) => r.cFullServiceID)).size > 1)
+  if (!key) throw new Error('Missing legacy branch key');
+  const wheels = rows.filter(
+    (record) => record.Interface === 'External wheels' && record.lBranchKey === key,
+  );
+  if (new Set(wheels.map((record) => record.cFullServiceID)).size > 1)
     throw new Error('Multiple wheel services cannot fit one xWheels slot');
-  records
-    .filter((r) => r.lBranchKey === key)
-    .forEach((record) => {
-      const branch: ObjectData = {};
-      if (record.Interface === 'DMS parameters') {
-        const target = Object.prototype.hasOwnProperty.call(DMS_FIELDS, record.cOptionID)
-          ? DMS_FIELDS[record.cOptionID as keyof typeof DMS_FIELDS]
-          : undefined;
-        if (target) set(branch, `dealerInfo.${target}`, text(record.cValue));
+
+  const results: SetupProcessingResult[] = [];
+  for (const record of rows) {
+    if (
+      record.lBranchKey !== key ||
+      !['Branches', 'DMS parameters', 'External wheels'].includes(record.Interface)
+    )
+      continue;
+    const result: SetupProcessingResult = {
+      data: createEmptySetupData(index + 1),
+      conflicts: {},
+      providedPaths: [],
+    };
+    const branch = result.data.branchSetups[index];
+    const paths = result.providedPaths;
+
+    if (record.Interface === 'Branches') {
+      if (record.cName !== undefined) {
+        branch.general.name = record.cName;
+        paths.push(['branchSetups', String(index), 'general', 'name']);
       }
-      if (record.Interface === 'External wheels') {
-        const target = Object.prototype.hasOwnProperty.call(WHEEL_FIELDS, record.cOptionID)
-          ? WHEEL_FIELDS[record.cOptionID as keyof typeof WHEEL_FIELDS]
-          : undefined;
-        if (target) set(branch, `externalServices.xWheels.${target}`, text(record.cValue));
-        if (/^4wheels_/i.test(record.cFullServiceID))
-          set(branch, 'externalServices.xWheels.handler', text('4Wheels'));
-        if (record.cOptionID === 'Active' && ['0', '1'].includes(record.cValue)) {
-          set(branch, 'externalServices.xWheels.enabled', toggle(record.cValue === '1'));
+      if (record.cDisplayName !== undefined) {
+        branch.general.displayName = record.cDisplayName;
+        paths.push(['branchSetups', String(index), 'general', 'displayName']);
+      }
+      if (record.cFirma !== undefined) {
+        branch.general.firma = record.cFirma;
+        paths.push(['branchSetups', String(index), 'general', 'firma']);
+      }
+      if (record.cPLZ !== undefined) {
+        branch.general.zipCode = record.cPLZ;
+        paths.push(['branchSetups', String(index), 'general', 'zipCode']);
+      }
+      if (record.cCity !== undefined) {
+        branch.general.city = record.cCity;
+        paths.push(['branchSetups', String(index), 'general', 'city']);
+      }
+      if (record.cCountryCode !== undefined) {
+        branch.general.countryCode = record.cCountryCode;
+        paths.push(['branchSetups', String(index), 'general', 'countryCode']);
+      }
+      if (record.cWebAddress !== undefined) {
+        branch.general.webAddress = record.cWebAddress;
+        paths.push(['branchSetups', String(index), 'general', 'webAddress']);
+      }
+      if (record.cEmail !== undefined) {
+        branch.general.email = record.cEmail;
+        paths.push(['branchSetups', String(index), 'general', 'email']);
+      }
+      if (record.cTel !== undefined) {
+        branch.general.phone = record.cTel;
+        paths.push(['branchSetups', String(index), 'general', 'phone']);
+      }
+      if (record.cOpeningHours !== undefined) {
+        branch.general.openingHours = record.cOpeningHours;
+        paths.push(['branchSetups', String(index), 'general', 'openingHours']);
+      }
+      if (record.cFirma !== undefined) {
+        branch.dealerInfo.dealerName = record.cFirma;
+        paths.push(['branchSetups', String(index), 'dealerInfo', 'dealerName']);
+      }
+      const country = options.countryByCode?.[record.cCountryCode]?.trim();
+      if (country && country !== '[MASKED]') {
+        branch.general.country = country;
+        paths.push(['branchSetups', String(index), 'general', 'country']);
+      }
+      const timezone = options.timezoneByLegacyKey?.[record.lTZKey]?.trim();
+      if (timezone && timezone !== '[MASKED]') {
+        branch.general.timezone = timezone;
+        paths.push(['branchSetups', String(index), 'general', 'timezone']);
+      }
+      if (record.cPreferredLangID && options.languageOptions?.includes(record.cPreferredLangID)) {
+        branch.general.preferredLanguage = record.cPreferredLangID;
+        paths.push(['branchSetups', String(index), 'general', 'preferredLanguage']);
+      }
+    }
+
+    if (record.Interface === 'DMS parameters' && record.cValue !== undefined) {
+      switch (record.cOptionID) {
+        case 'DistributionPartnerNumber':
+          branch.dealerInfo.dealerNumber = record.cValue;
+          paths.push(['branchSetups', String(index), 'dealerInfo', 'dealerNumber']);
+          break;
+        case 'OutletNumber':
+          branch.dealerInfo.outlerNumber = record.cValue;
+          paths.push(['branchSetups', String(index), 'dealerInfo', 'outlerNumber']);
+          break;
+        case 'Firm':
+          branch.dealerInfo.dmsCompanyNumber = record.cValue;
+          paths.push(['branchSetups', String(index), 'dealerInfo', 'dmsCompanyNumber']);
+          break;
+        case 'Branch':
+          branch.dealerInfo.dmsBranchNumber = record.cValue;
+          paths.push(['branchSetups', String(index), 'dealerInfo', 'dmsBranchNumber']);
+          break;
+      }
+    }
+
+    if (record.Interface === 'External wheels') {
+      const service = branch.externalServices.xWheels;
+      if (/^4wheels_/i.test(record.cFullServiceID ?? '')) {
+        service.handler = '4Wheels';
+        paths.push(['branchSetups', String(index), 'externalServices', 'xWheels', 'handler']);
+      }
+      if (record.cValue !== undefined) {
+        switch (record.cOptionID) {
+          case 'Name':
+            service.name = record.cValue;
+            paths.push(['branchSetups', String(index), 'externalServices', 'xWheels', 'name']);
+            break;
+          case 'EndpointURL':
+            service.baseUrl = record.cValue;
+            paths.push(['branchSetups', String(index), 'externalServices', 'xWheels', 'baseUrl']);
+            break;
+          case 'DealerNumber':
+            service.dealerNumber = record.cValue;
+            paths.push([
+              'branchSetups',
+              String(index),
+              'externalServices',
+              'xWheels',
+              'dealerNumber',
+            ]);
+            break;
+          case 'QueryPackageSize':
+            service.queryPackageSize = record.cValue;
+            paths.push([
+              'branchSetups',
+              String(index),
+              'externalServices',
+              'xWheels',
+              'queryPackageSize',
+            ]);
+            break;
+          case 'Active':
+            if (record.cValue === '0' || record.cValue === '1') {
+              service.enabled = record.cValue === '1';
+              paths.push(['branchSetups', String(index), 'externalServices', 'xWheels', 'enabled']);
+            }
+            break;
         }
       }
-      drafts.push(branchDraft(branch, index));
-    });
-  return mergeAutomaticSetup(profile, ...drafts);
+    }
+    if (paths.length) results.push(result);
+  }
+  return mergeAutomaticSetup(profile, ...results);
 }
 
 export function processCsv(
@@ -391,37 +468,79 @@ export function processCsv(
   return readCsv(input).then((records) => processParsedCsv(records, options));
 }
 
-const HTML_FIELDS = {
-  dealer_name: ['general.firma', 'dealerInfo.dealerName'],
-  dealer_number: ['dealerInfo.dealerNumber'],
-  business_location_number: ['dealerInfo.outlerNumber'],
-  dms_name: ['dealerInfo.dms'],
-  dms_company: ['dealerInfo.dmsCompanyNumber'],
-  dms_branch: ['dealerInfo.dmsBranchNumber'],
-  dms_ip: ['dealerInfo.dmsIP'],
-} as const;
-const ONLINE_FIELDS = {
-  component_soft_drop: 'softDrop',
-  component_soft_drop_checkout: 'softCheckout',
-  component_soft_chat: 'softChat',
-  component_soft_confirm: 'softConfirm',
-  component_soft_analytics: 'softAnalytics',
-} as const;
-function mapHtml(fields: ObjectData, index: number): SetupDraft {
-  const organization: ObjectData = {};
-  set(organization, 'general.name', text(fields.organization_name));
-  set(organization, 'general.worldName', text(fields.world_name));
-  Object.entries(ONLINE_FIELDS).forEach(([source, target]) =>
-    set(organization, `onlineComponents.${target}`, toggle(fields[source])),
+function mapHtml(fields: Record<string, string | boolean>, index: number): SetupProcessingResult {
+  fields = Object.fromEntries(
+    Object.entries(fields)
+      .map(([key, value]) => [key, typeof value === 'string' ? value.trim() : value])
+      .filter(([, value]) => value !== '' && value !== '[MASKED]'),
   );
-  const branch: ObjectData = {};
-  Object.entries(HTML_FIELDS).forEach(([source, targets]) =>
-    targets.forEach((target) => set(branch, target, text(fields[source]))),
-  );
-  return {
-    ...(Object.keys(organization).length ? { organizationSetup: organization } : {}),
-    ...branchDraft(branch, index),
+  const result: SetupProcessingResult = {
+    data: createEmptySetupData(index + 1),
+    conflicts: {},
+    providedPaths: [],
   };
+  const organization = result.data.organizationSetup;
+  const branch = result.data.branchSetups[index];
+  const paths = result.providedPaths;
+  if (typeof fields.organization_name === 'string') {
+    organization.general.name = fields.organization_name;
+    paths.push(['organizationSetup', 'general', 'name']);
+  }
+  if (typeof fields.world_name === 'string') {
+    organization.general.worldName = fields.world_name;
+    paths.push(['organizationSetup', 'general', 'worldName']);
+  }
+  if (typeof fields.dealer_name === 'string') {
+    branch.general.firma = fields.dealer_name;
+    paths.push(['branchSetups', String(index), 'general', 'firma']);
+    branch.dealerInfo.dealerName = fields.dealer_name;
+    paths.push(['branchSetups', String(index), 'dealerInfo', 'dealerName']);
+  }
+  if (typeof fields.dealer_number === 'string') {
+    branch.dealerInfo.dealerNumber = fields.dealer_number;
+    paths.push(['branchSetups', String(index), 'dealerInfo', 'dealerNumber']);
+  }
+  if (typeof fields.business_location_number === 'string') {
+    branch.dealerInfo.outlerNumber = fields.business_location_number;
+    paths.push(['branchSetups', String(index), 'dealerInfo', 'outlerNumber']);
+  }
+  if (typeof fields.dms_name === 'string') {
+    branch.dealerInfo.dms = fields.dms_name;
+    paths.push(['branchSetups', String(index), 'dealerInfo', 'dms']);
+  }
+  if (typeof fields.dms_company === 'string') {
+    branch.dealerInfo.dmsCompanyNumber = fields.dms_company;
+    paths.push(['branchSetups', String(index), 'dealerInfo', 'dmsCompanyNumber']);
+  }
+  if (typeof fields.dms_branch === 'string') {
+    branch.dealerInfo.dmsBranchNumber = fields.dms_branch;
+    paths.push(['branchSetups', String(index), 'dealerInfo', 'dmsBranchNumber']);
+  }
+  if (typeof fields.dms_ip === 'string') {
+    branch.dealerInfo.dmsIP = fields.dms_ip;
+    paths.push(['branchSetups', String(index), 'dealerInfo', 'dmsIP']);
+  }
+  if (typeof fields.component_soft_drop === 'boolean') {
+    organization.onlineComponents.softDrop = fields.component_soft_drop;
+    paths.push(['organizationSetup', 'onlineComponents', 'softDrop']);
+  }
+  if (typeof fields.component_soft_drop_checkout === 'boolean') {
+    organization.onlineComponents.softCheckout = fields.component_soft_drop_checkout;
+    paths.push(['organizationSetup', 'onlineComponents', 'softCheckout']);
+  }
+  if (typeof fields.component_soft_chat === 'boolean') {
+    organization.onlineComponents.softChat = fields.component_soft_chat;
+    paths.push(['organizationSetup', 'onlineComponents', 'softChat']);
+  }
+  if (typeof fields.component_soft_confirm === 'boolean') {
+    organization.onlineComponents.softConfirm = fields.component_soft_confirm;
+    paths.push(['organizationSetup', 'onlineComponents', 'softConfirm']);
+  }
+  if (typeof fields.component_soft_analytics === 'boolean') {
+    organization.onlineComponents.softAnalytics = fields.component_soft_analytics;
+    paths.push(['organizationSetup', 'onlineComponents', 'softAnalytics']);
+  }
+  return result;
 }
 
 /** Reads the form state after the page has initialized. */
@@ -455,7 +574,7 @@ export function processHtml(
           return fields;
         }),
       )
-      .then((fields) => mergeAutomaticSetup({}, mapHtml(fields, index)))
+      .then((fields) => mapHtml(fields, index))
       .finally(() => page.close());
   });
 }
