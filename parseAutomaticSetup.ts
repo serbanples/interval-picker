@@ -8,16 +8,6 @@ export type CsvRecord = Record<string, string>;
 type Value = string | boolean | number;
 type ObjectData = Record<string, unknown>;
 
-export type PlainValues<T> = T extends { type: unknown; value: infer V }
-  ? V
-  : T extends Date
-    ? T
-    : T extends readonly (infer U)[]
-      ? PlainValues<U>[]
-      : T extends object
-        ? { [K in keyof T]: PlainValues<T[K]> }
-        : T;
-
 export type DeepPartial<T> = T extends Date
   ? T
   : T extends readonly (infer U)[]
@@ -27,16 +17,18 @@ export type DeepPartial<T> = T extends Date
       : T;
 
 /** Each conflicting leaf is an array of distinct plain values. */
-export type ConflictData<T> = T extends Date
-  ? T[]
-  : T extends readonly (infer U)[]
-    ? ConflictData<U>[]
-    : T extends object
-      ? { [K in keyof T]?: ConflictData<T[K]> }
-      : T[];
+export type ConflictData<T> = [T] extends [Value | undefined]
+  ? Exclude<T, undefined>[]
+  : T extends Date
+    ? T[]
+    : T extends readonly (infer U)[]
+      ? ConflictData<U>[]
+      : T extends object
+        ? { [K in keyof T]?: ConflictData<T[K]> }
+        : T[];
 
-export type SetupDraft = DeepPartial<PlainValues<AutomaticSetupSessionData>>;
-export type SetupConflictData = ConflictData<PlainValues<AutomaticSetupSessionData>>;
+export type SetupDraft = DeepPartial<AutomaticSetupSessionData>;
+export type SetupConflictData = ConflictData<AutomaticSetupSessionData>;
 export interface SetupProcessingResult {
   data: SetupDraft;
   conflicts: SetupConflictData;
