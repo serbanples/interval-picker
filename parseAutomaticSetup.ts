@@ -1,7 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 import { parseString } from '@fast-csv/parse';
 import type { Browser } from 'puppeteer';
-import type { AutomaticSetupSessionData } from './AutomaticSetupSessionTypes';
+import { createEmptySetupData, createEmptyFile } from './automaticSetupDefaults';
+import type { SetupData } from './automaticSetupDefaults';
+export { createEmptySetupData } from './automaticSetupDefaults';
+export type { SetupData } from './automaticSetupDefaults';
 
 export type ImportInput = string | Buffer | Uint8Array;
 export type CsvRecord = Record<string, string>;
@@ -27,13 +30,22 @@ export type ConflictData<T> = [T] extends [Value | undefined]
         ? { [K in keyof T]?: ConflictData<T[K]> }
         : T[];
 
-export type SetupDraft = DeepPartial<AutomaticSetupSessionData>;
-export type SetupConflictData = ConflictData<AutomaticSetupSessionData>;
+export type SetupDraft = DeepPartial<SetupData>;
+export type SetupConflictData = ConflictData<SetupData>;
 export interface SetupProcessingResult {
-  data: SetupDraft;
+  data: SetupData;
   conflicts: SetupConflictData;
+  /** JSON-safe paths to actual values. Defaults are excluded from subsequent merges. */
+  providedPaths: string[][];
 }
-export type SetupMergeInput = SetupDraft | SetupProcessingResult;
+export type SetupMergeInput =
+  | SetupDraft
+  | {
+      data: SetupDraft;
+      conflicts: SetupConflictData;
+      /** Omitted for legacy sparse results, where every supplied value is considered present. */
+      providedPaths?: string[][];
+    };
 
 export interface CsvProcessingOptions {
   /** Target slot in existing.branchSetups. No branch ID exists in the supplied type. */
@@ -165,21 +177,76 @@ function mergeNode(nodes: NodeInput[], path: string): NodeResult {
 
 /**
  * Existing values participate equally, including explicit '', false and 0.
- * Pass the entire previous result to preserve unresolved conflict history.
+ * Pass the entire previous result to preserve conflict history and distinguish defaults
+ * from actual values. Passing only result.data treats every default as an explicit value.
  * Array items are matched by index. Inputs are never mutated.
  */
 export function mergeAutomaticSetup(
   existing: SetupMergeInput,
   ...processed: SetupMergeInput[]
 ): SetupProcessingResult {
-  const nodes = [existing, ...processed].map((input) =>
-    'data' in input && 'conflicts' in input ? (input as SetupProcessingResult) : { data: input },
-  );
+  const nodes = [existing, ...processed].map((input): NodeInput => {
+    if (!('data' in input && 'conflicts' in input)) return { data: input };
+    const paths = input.providedPaths;
+    return {
+      data:
+        paths === undefined
+          ? input.data
+          : selectProvided(input.data, new Set(paths.map((path) => JSON.stringify(path)))),
+      conflicts: input.conflicts,
+    };
+  });
   const result = mergeNode(nodes, 'setup');
+  const draft = (result.data ?? {}) as SetupDraft;
+  const defaults = createEmptySetupData(Math.max(1, draft.branchSetups?.length ?? 0));
+  defaults.files = Array.from({ length: draft.files?.length ?? 0 }, createEmptyFile);
   return {
-    data: result.data as SetupDraft,
+    data: fillDefaults(defaults, draft) as SetupData,
     conflicts: (result.conflicts ?? {}) as SetupConflictData,
+    providedPaths: collectProvidedPaths(draft).sort((a, b) => {
+      const left = JSON.stringify(a);
+      const right = JSON.stringify(b);
+      return left < right ? -1 : left > right ? 1 : 0;
+    }),
   };
+}
+
+/** Fill only after resolving source values, so placeholders never become candidates. */
+function fillDefaults(defaults: unknown, value: unknown): unknown {
+  if (value === undefined || value === null) return copy(defaults);
+  if (Array.isArray(defaults) && Array.isArray(value))
+    return Array.from({ length: Math.max(defaults.length, value.length) }, (_, index) =>
+      fillDefaults(defaults[index], value[index]),
+    );
+  if (object(defaults) && object(value))
+    return Object.fromEntries(
+      [...new Set([...Object.keys(defaults), ...Object.keys(value)])].map((key) => [
+        key,
+        fillDefaults(defaults[key], value[key]),
+      ]),
+    );
+  return copy(value);
+}
+
+function collectProvidedPaths(value: unknown, path: string[] = []): string[][] {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value) || object(value))
+    return Object.entries(value).flatMap(([key, child]) =>
+      collectProvidedPaths(child, [...path, key]),
+    );
+  return [path];
+}
+
+function selectProvided(value: unknown, paths: Set<string>, path: string[] = []): unknown {
+  if (Array.isArray(value))
+    return value.map((child, index) => selectProvided(child, paths, [...path, String(index)]));
+  if (object(value))
+    return Object.fromEntries(
+      Object.entries(value)
+        .map(([key, child]) => [key, selectProvided(child, paths, [...path, key])])
+        .filter(([, child]) => child !== undefined),
+    );
+  return paths.has(JSON.stringify(path)) ? value : undefined;
 }
 
 function branchIndex(index = 0): number {
@@ -206,8 +273,8 @@ function set(target: ObjectData, path: string, value: unknown): void {
 }
 function branchDraft(branch: ObjectData, index: number): SetupDraft {
   const branchSetups: NonNullable<SetupDraft['branchSetups']> = [];
-  if (Object.keys(branch).length) branchSetups[index] = branch;
-  return branchSetups.length ? { branchSetups } : {};
+  branchSetups[index] = branch;
+  return { branchSetups };
 }
 
 function readCsv(input: ImportInput): Promise<CsvRecord[]> {
@@ -271,7 +338,7 @@ export function processParsedCsv(
     options.confirmedBmwProfile === true
       ? { organizationSetup: { general: { bmw: toggle(true) } } }
       : {};
-  if (!masters.length) return { data: profile, conflicts: {} };
+  if (!masters.length) return mergeAutomaticSetup(profile, branchDraft({}, index));
   const key = masters[0].lBranchKey;
   if (!key?.trim()) throw new Error('Missing legacy branch key');
   const drafts: SetupDraft[] = masters.map((master) => {
@@ -388,12 +455,12 @@ export function processHtml(
           return fields;
         }),
       )
-      .then((fields) => ({ data: mapHtml(fields, index), conflicts: {} }))
+      .then((fields) => mergeAutomaticSetup({}, mapHtml(fields, index)))
       .finally(() => page.close());
   });
 }
 
-/** Convenience wrapper. The return value is now { data, conflicts }. */
+/** Convenience wrapper returning complete data, conflicts and source-presence metadata. */
 export function parseAutomaticSetup(
   csv: ImportInput,
   html: ImportInput,
