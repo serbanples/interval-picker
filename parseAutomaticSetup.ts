@@ -18,7 +18,9 @@
  * precompletedPaths. Imported false/0 is always recorded as a supplied value.
  *
  * Each CSV import appends a fresh branch; pre-existing branches are never targeted.
- * Organization defaults must still be supplied. HTML branch values are retained
+ * Shape: organizationSetup.{ OrganizationDetails, Settings } and
+ * branchSetups[].{ BranchDetails, Settings }. Organization defaults are supplied.
+ * Settings is preserved on existing objects; each new branch gets Settings: {}. HTML branch values are retained
  * until a CSV arrives, and also merge into the most recently CSV-created branch.
  * Reimporting a CSV deliberately creates another branch.
  * For a multi-branch CSV, select csvBranchKey; each call appends that branch.
@@ -145,20 +147,23 @@ function createEmptyBranch(): BranchSetupType {
     });
     const dmsService = () => ({ ...service(), autoAddCustomer: false, autoChangeCustomer: false });
     return {
-        General: {
-            name: '', displayName: '', firma: '', zipCode: '', city: '', country: '',
-            countryCode: '', webAddress: '', email: '', phone: '', fax: '',
-            openingHours: '', preferredLanguage: '', timezone: '', unitName: '', unitsPerHour: 0,
+        BranchDetails: {
+            General: {
+                name: '', displayName: '', firma: '', zipCode: '', city: '', country: '',
+                countryCode: '', webAddress: '', email: '', phone: '', fax: '',
+                openingHours: '', preferredLanguage: '', timezone: '', unitName: '', unitsPerHour: 0,
+            },
+            DealerInformation: {
+                dealerName: '', dealerNumber: '', outletNumber: '', DMS: '',
+                DMSCompanyName: '', DMSIP: '', DMSBranchNumber: '',
+            },
+            xClient: { ...dmsService(), global: false, proxy: '', authentication: '' },
+            xWheels: { ...service(), queryPackageSize: '' },
+            xAdditionalInfo: dmsService(), xPoolOpType: dmsService(), xOrder: dmsService(),
+            xCatalog: dmsService(), xPartsAvailability: dmsService(),
+            xPriceInformation: dmsService(), xCarDataReadings: dmsService(),
         },
-        DealerInformation: {
-            dealerName: '', dealerNumber: '', outletNumber: '', DMS: '',
-            DMSCompanyName: '', DMSIP: '', DMSBranchNumber: '',
-        },
-        xClient: { ...dmsService(), global: false, proxy: '', authentication: '' },
-        xWheels: { ...service(), queryPackageSize: '' },
-        xAdditionalInfo: dmsService(), xPoolOpType: dmsService(), xOrder: dmsService(),
-        xCatalog: dmsService(), xPartsAvailability: dmsService(),
-        xPriceInformation: dmsService(), xCarDataReadings: dmsService(),
+        Settings: {},
     };
 }
 
@@ -207,8 +212,8 @@ function addDms(
     key: string,
     value: unknown,
 ): void {
-    if (key !== 'DMSCompanyNumber') add(`${branch}.DealerInformation.${key}`, value);
-    dmsInterfaces.forEach(service => add(`${branch}.${service}.${key}`, value));
+    if (key !== 'DMSCompanyNumber') add(`${branch}.BranchDetails.DealerInformation.${key}`, value);
+    dmsInterfaces.forEach(service => add(`${branch}.BranchDetails.${service}.${key}`, value));
 }
 
 function readHtmlFields(html: string, options: ImportOptions): Promise<Record<string, unknown>> {
@@ -265,11 +270,11 @@ export function processHtml(
             if (state.latestCsvBranch) add(`${state.latestCsvBranch}.${relativePath}`, value);
         };
         Object.entries(htmlOrganization).forEach(([source, target]) =>
-            add(`organizationSetup.${target}`, fields[source]));
-        addBranch(`${branch}.General.firma`, fields.dealer_name);
-        addBranch(`${branch}.DealerInformation.dealerName`, fields.dealer_name);
-        addBranch(`${branch}.DealerInformation.DMSIP`, fields.dms_ip);
-        addBranch(`${branch}.xWheels.enabled`, fields.external_wheel_storage);
+            add(`organizationSetup.OrganizationDetails.${target}`, fields[source]));
+        addBranch(`${branch}.BranchDetails.General.firma`, fields.dealer_name);
+        addBranch(`${branch}.BranchDetails.DealerInformation.dealerName`, fields.dealer_name);
+        addBranch(`${branch}.BranchDetails.DealerInformation.DMSIP`, fields.dms_ip);
+        addBranch(`${branch}.BranchDetails.xWheels.enabled`, fields.external_wheel_storage);
         const mapping: Record<string, string> = {
             dealer_number: 'dealerNumber', business_location_number: 'outletNumber',
             dms_name: 'DMS', dms_company: 'DMSCompanyNumber', dms_branch: 'DMSBranchNumber',
@@ -324,12 +329,12 @@ export function processCsv(
         const { add, commit } = collector(state, createEmptyBranch());
         (state.htmlBranchValues ?? []).forEach(({ path, value }) => add(`${branch}.${path}`, value));
         rows.filter(row => row.Interface === 'Database ID').forEach(row =>
-            add('organizationSetup.LegacyTKP.databaseId', row.cClientID));
+            add('organizationSetup.OrganizationDetails.LegacyTKP.databaseId', row.cClientID));
         branchRows.forEach(row => {
             if (row.Interface === 'Branches') {
                 Object.entries(branchColumns).forEach(([column, target]) =>
-                    add(`${branch}.General.${target}`, row[column]));
-                add(`${branch}.DealerInformation.dealerName`, row.cFirma);
+                    add(`${branch}.BranchDetails.General.${target}`, row[column]));
+                add(`${branch}.BranchDetails.DealerInformation.dealerName`, row.cFirma);
             }
             if (row.Interface === 'DMS parameters') {
                 const target: Record<string, string> = {
@@ -343,7 +348,7 @@ export function processCsv(
                     Name: 'name', Active: 'enabled', EndpointURL: 'baseURL',
                     DealerNumber: 'dealerNumber', QueryPackageSize: 'queryPackageSize',
                 };
-                if (target[row.cOptionID]) add(`${branch}.xWheels.${target[row.cOptionID]}`, row.cValue);
+                if (target[row.cOptionID]) add(`${branch}.BranchDetails.xWheels.${target[row.cOptionID]}`, row.cValue);
             }
         });
         commit();
@@ -364,5 +369,6 @@ export function processSetupFile(
         throw new Error(`Unsupported file type: ${file.type}`);
     });
 }
+
 
 
