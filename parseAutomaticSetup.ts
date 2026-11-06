@@ -17,17 +17,12 @@
  * If initial false/0 is a deliberate answer, pass its dotted path through
  * precompletedPaths. Imported false/0 is always recorded as a supplied value.
  *
- * Branches and missing branch fields are created automatically with empty defaults.
- * Organization defaults must still be supplied.
- * No inferred names, country/language/timezone normalization, URL construction,
- * handler selection, credentials, settings, createdAt or files metadata is added.
- * Shared DMS values populate the eight DMS interface blocks but never enable them.
- * DMSCompanyName remains untouched: the sources supply a number, not a name.
- * CSV cCounty and lTZKey remain raw strings in country and timezone respectively.
- *
- * For multiple CSV branches, call once per csvBranchKey with its target branchIndex.
- * For multiple wheel providers, select wheelServiceId explicitly (the type has one
- * xWheels slot). HTML always targets the specified branchIndex, defaulting to zero.
+ * Each CSV import appends a fresh branch; pre-existing branches are never targeted.
+ * Organization defaults must still be supplied. HTML branch values are retained
+ * until a CSV arrives, and also merge into the most recently CSV-created branch.
+ * Reimporting a CSV deliberately creates another branch.
+ * For a multi-branch CSV, select csvBranchKey; each call appends that branch.
+ * Multiple wheel providers require wheelServiceId (the type has one xWheels slot).
  */
 import { readFile } from 'node:fs/promises';
 import { parseString } from 'fast-csv';
@@ -50,13 +45,15 @@ export interface SetupImportState {
     conflicts: DeepConflicts<AutomaticSetupSessionData>;
     /** Keep this alongside data/conflicts between calls (also JSON serializable). */
     assigned: Record<string, true>;
+    /** Relative branch assignments retained for HTML/CSV merging in either order. */
+    htmlBranchValues?: Assignment[];
+    /** Internal conflict path of the last appended CSV branch, not a caller selection. */
+    latestCsvBranch?: string;
 }
 
 export interface ImportOptions {
     /** Optional existing browser. Only the temporary page is closed when supplied. */
     browser?: Browser;
-    /** Existing branch index or the next index to append. Defaults to zero. */
-    branchIndex?: number;
     /** Required when the CSV contains more than one branch. */
     csvBranchKey?: string;
     /** Required if the selected CSV branch contains multiple wheel providers. */
@@ -165,53 +162,42 @@ function createEmptyBranch(): BranchSetupType {
     };
 }
 
-function collector(state: SetupImportState, branch: string) {
-    const branchIndex = Number(branch.split('.')[1]);
-    const defaults = createEmptyBranch();
+function decodeValue(current: unknown, raw: unknown, path: string): Primitive {
+    let value: Primitive;
+    if (typeof current === 'string' && typeof raw === 'string') value = raw;
+    else if (typeof current === 'boolean') {
+        if (raw === true || raw === 'true' || raw === '1') value = true;
+        else if (raw === false || raw === 'false' || raw === '0') value = false;
+        else throw new Error(`Invalid boolean at ${path}: ${String(raw)}`);
+    } else if (typeof current === 'number' &&
+        (typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '')) &&
+        Number.isFinite(Number(raw))) value = Number(raw);
+    else throw new Error(`Incompatible source value at ${path}`);
+    return value;
+}
+
+function collector(state: SetupImportState, newBranch?: BranchSetupType) {
+    const stagedData = newBranch
+        ? { ...state.data, branchSetups: [...(state.data.branchSetups ?? []), newBranch] }
+        : state.data;
     const assignments: Assignment[] = [];
     return {
         add(path: string, raw: unknown): void {
-            // Empty source strings mean missing data, never an explicit clearing command.
             if (raw === undefined || raw === null || raw === '') return;
-            const existing = readPath(state.data, path);
-            const current = existing === undefined && path.startsWith(`${branch}.`)
-                ? readPath(defaults, path.slice(branch.length + 1)) : existing;
+            const current = readPath(stagedData, path);
             if (current === undefined) throw new Error(`Missing default field: ${path}`);
-            let value: Primitive;
-            if (typeof current === 'string' && typeof raw === 'string') value = raw;
-            else if (typeof current === 'boolean') {
-                if (raw === true || raw === 'true' || raw === '1') value = true;
-                else if (raw === false || raw === 'false' || raw === '0') value = false;
-                else throw new Error(`Invalid boolean at ${path}: ${String(raw)}`);
-            } else if (typeof current === 'number' &&
-                (typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '')) &&
-                Number.isFinite(Number(raw))) value = Number(raw);
-            else throw new Error(`Incompatible source value at ${path}`);
-            assignments.push({ path, value });
+            assignments.push({ path, value: decodeValue(current, raw, path) });
         },
         commit(): SetupImportState {
-            // Parsing, branch selection and type validation finish before any mutation.
-            if (!state.data.branchSetups) state.data.branchSetups = [];
-            if (!state.data.branchSetups[branchIndex]) state.data.branchSetups[branchIndex] = defaults;
-            // Fill only missing fields; preserve existing values and object references.
-            Object.entries(defaults).forEach(([section, fields]) => {
-                Object.entries(fields).forEach(([key, value]) => {
-                    const path = `${branch}.${section}.${key}`;
-                    if (readPath(state.data, path) === undefined) writePath(state.data, path, value);
-                });
-            });
+            // Validate the complete import before appending or changing any values.
+            if (newBranch) {
+                if (!state.data.branchSetups) state.data.branchSetups = [];
+                state.data.branchSetups.push(newBranch);
+            }
             assignments.forEach(assignment => assign(state, assignment));
             return state;
         },
     };
-}
-
-function branchPrefix(state: SetupImportState, options: ImportOptions): string {
-    const index = options.branchIndex ?? 0;
-    if (!Number.isInteger(index) || index < 0 || index > (state.data.branchSetups?.length ?? 0)) {
-        throw new Error('branchIndex must select an existing branch or the next index to append');
-    }
-    return `branchSetups.${index}`;
 }
 
 /** No normalization: these are shared raw DMS identifiers, not adapter configuration. */
@@ -267,20 +253,31 @@ export function processHtml(
     options: ImportOptions = {},
 ): Promise<SetupImportState> {
     return readHtmlFields(html, options).then(fields => {
-        const branch = branchPrefix(state, options);
-        const { add, commit } = collector(state, branch);
+        const { add, commit } = collector(state);
+        const branch = 'branch';
+        const defaults = createEmptyBranch();
+        const htmlBranchValues: Assignment[] = [];
+        const addBranch = (path: string, raw: unknown): void => {
+            if (raw === undefined || raw === null || raw === '') return;
+            const relativePath = path.slice(branch.length + 1);
+            const value = decodeValue(readPath(defaults, relativePath), raw, relativePath);
+            htmlBranchValues.push({ path: relativePath, value });
+            if (state.latestCsvBranch) add(`${state.latestCsvBranch}.${relativePath}`, value);
+        };
         Object.entries(htmlOrganization).forEach(([source, target]) =>
             add(`organizationSetup.${target}`, fields[source]));
-        add(`${branch}.General.firma`, fields.dealer_name);
-        add(`${branch}.DealerInformation.dealerName`, fields.dealer_name);
-        add(`${branch}.DealerInformation.DMSIP`, fields.dms_ip);
-        add(`${branch}.xWheels.enabled`, fields.external_wheel_storage);
+        addBranch(`${branch}.General.firma`, fields.dealer_name);
+        addBranch(`${branch}.DealerInformation.dealerName`, fields.dealer_name);
+        addBranch(`${branch}.DealerInformation.DMSIP`, fields.dms_ip);
+        addBranch(`${branch}.xWheels.enabled`, fields.external_wheel_storage);
         const mapping: Record<string, string> = {
             dealer_number: 'dealerNumber', business_location_number: 'outletNumber',
             dms_name: 'DMS', dms_company: 'DMSCompanyNumber', dms_branch: 'DMSBranchNumber',
         };
-        Object.entries(mapping).forEach(([source, target]) => addDms(add, branch, target, fields[source]));
-        return commit();
+        Object.entries(mapping).forEach(([source, target]) => addDms(addBranch, branch, target, fields[source]));
+        commit();
+        state.htmlBranchValues = [...(state.htmlBranchValues ?? []), ...htmlBranchValues];
+        return state;
     });
 }
 
@@ -300,12 +297,12 @@ export function processCsv(
     options: ImportOptions = {},
 ): Promise<SetupImportState> {
     return parseCsv(csv, options.delimiter ?? ';').then(rows => {
-        const branch = branchPrefix(state, options);
+        const branch = `branchSetups.${state.data.branchSetups?.length ?? 0}`;
         const keys = rows.filter(row => ['Branches', 'DMS parameters', 'External wheels'].includes(row.Interface))
             .map(row => row.lBranchKey || row.lBranchKey_PK)
             .filter((key, index, all) => Boolean(key) && all.indexOf(key) === index);
         if (!options.csvBranchKey && keys.length > 1) {
-            throw new Error('Multiple CSV branches: supply csvBranchKey and branchIndex');
+            throw new Error('Multiple CSV branches: supply csvBranchKey');
         }
         const branchKey = options.csvBranchKey ?? keys[0];
         if (options.csvBranchKey && !keys.includes(options.csvBranchKey)) {
@@ -323,7 +320,9 @@ export function processCsv(
             throw new Error(`Wheel service not found: ${options.wheelServiceId}`);
         }
         const wheelService = options.wheelServiceId ?? services[0];
-        const { add, commit } = collector(state, branch);
+        if (!branchKey) throw new Error('No branch found in CSV');
+        const { add, commit } = collector(state, createEmptyBranch());
+        (state.htmlBranchValues ?? []).forEach(({ path, value }) => add(`${branch}.${path}`, value));
         rows.filter(row => row.Interface === 'Database ID').forEach(row =>
             add('organizationSetup.LegacyTKP.databaseId', row.cClientID));
         branchRows.forEach(row => {
@@ -347,7 +346,9 @@ export function processCsv(
                 if (target[row.cOptionID]) add(`${branch}.xWheels.${target[row.cOptionID]}`, row.cValue);
             }
         });
-        return commit();
+        commit();
+        state.latestCsvBranch = branch;
+        return state;
     });
 }
 
@@ -363,4 +364,5 @@ export function processSetupFile(
         throw new Error(`Unsupported file type: ${file.type}`);
     });
 }
+
 
