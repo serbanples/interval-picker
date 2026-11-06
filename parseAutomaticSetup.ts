@@ -17,7 +17,8 @@
  * If initial false/0 is a deliberate answer, pass its dotted path through
  * precompletedPaths. Imported false/0 is always recorded as a supplied value.
  *
- * Supply all mapped nested objects and primitive defaults for the target branch.
+ * Branches and missing branch fields are created automatically with empty defaults.
+ * Organization defaults must still be supplied.
  * No inferred names, country/language/timezone normalization, URL construction,
  * handler selection, credentials, settings, createdAt or files metadata is added.
  * Shared DMS values populate the eight DMS interface blocks but never enable them.
@@ -31,7 +32,7 @@
 import { readFile } from 'node:fs/promises';
 import { parseString } from 'fast-csv';
 import puppeteer, { Browser } from 'puppeteer';
-import type { AutomaticSetupSessionData } from './AutomaticSetupSessionTypes';
+import type { AutomaticSetupSessionData, BranchSetupType } from './AutomaticSetupSessionTypes';
 
 /** Like DeepPartial, but primitive leaves contain the distinct conflicting values. */
 export type DeepConflicts<T> =
@@ -54,7 +55,7 @@ export interface SetupImportState {
 export interface ImportOptions {
     /** Optional existing browser. Only the temporary page is closed when supplied. */
     browser?: Browser;
-    /** Target branch must already exist in the supplied default object. */
+    /** Existing branch index or the next index to append. Defaults to zero. */
     branchIndex?: number;
     /** Required when the CSV contains more than one branch. */
     csvBranchKey?: string;
@@ -138,13 +139,43 @@ function assign(state: SetupImportState, { path, value }: Assignment): void {
     state.assigned[path] = true;
 }
 
-function collector(state: SetupImportState) {
+/** Each call creates independent objects; no defaults are shared between branches. */
+function createEmptyBranch(): BranchSetupType {
+    const service = () => ({
+        name: '', description: '', enabled: false, enableText: false, handler: '',
+        baseURL: '', dealerNumber: '', outletNumber: '', DMS: '',
+        DMSCompanyNumber: '', DMSBranchNumber: '',
+    });
+    const dmsService = () => ({ ...service(), autoAddCustomer: false, autoChangeCustomer: false });
+    return {
+        General: {
+            name: '', displayName: '', firma: '', zipCode: '', city: '', country: '',
+            countryCode: '', webAddress: '', email: '', phone: '', fax: '',
+            openingHours: '', preferredLanguage: '', timezone: '', unitName: '', unitsPerHour: 0,
+        },
+        DealerInformation: {
+            dealerName: '', dealerNumber: '', outletNumber: '', DMS: '',
+            DMSCompanyName: '', DMSIP: '', DMSBranchNumber: '',
+        },
+        xClient: { ...dmsService(), global: false, proxy: '', authentication: '' },
+        xWheels: { ...service(), queryPackageSize: '' },
+        xAdditionalInfo: dmsService(), xPoolOpType: dmsService(), xOrder: dmsService(),
+        xCatalog: dmsService(), xPartsAvailability: dmsService(),
+        xPriceInformation: dmsService(), xCarDataReadings: dmsService(),
+    };
+}
+
+function collector(state: SetupImportState, branch: string) {
+    const branchIndex = Number(branch.split('.')[1]);
+    const defaults = createEmptyBranch();
     const assignments: Assignment[] = [];
     return {
         add(path: string, raw: unknown): void {
             // Empty source strings mean missing data, never an explicit clearing command.
             if (raw === undefined || raw === null || raw === '') return;
-            const current = readPath(state.data, path);
+            const existing = readPath(state.data, path);
+            const current = existing === undefined && path.startsWith(`${branch}.`)
+                ? readPath(defaults, path.slice(branch.length + 1)) : existing;
             if (current === undefined) throw new Error(`Missing default field: ${path}`);
             let value: Primitive;
             if (typeof current === 'string' && typeof raw === 'string') value = raw;
@@ -160,6 +191,15 @@ function collector(state: SetupImportState) {
         },
         commit(): SetupImportState {
             // Parsing, branch selection and type validation finish before any mutation.
+            if (!state.data.branchSetups) state.data.branchSetups = [];
+            if (!state.data.branchSetups[branchIndex]) state.data.branchSetups[branchIndex] = defaults;
+            // Fill only missing fields; preserve existing values and object references.
+            Object.entries(defaults).forEach(([section, fields]) => {
+                Object.entries(fields).forEach(([key, value]) => {
+                    const path = `${branch}.${section}.${key}`;
+                    if (readPath(state.data, path) === undefined) writePath(state.data, path, value);
+                });
+            });
             assignments.forEach(assignment => assign(state, assignment));
             return state;
         },
@@ -168,8 +208,8 @@ function collector(state: SetupImportState) {
 
 function branchPrefix(state: SetupImportState, options: ImportOptions): string {
     const index = options.branchIndex ?? 0;
-    if (!Number.isInteger(index) || index < 0 || !state.data.branchSetups?.[index]) {
-        throw new Error(`Provide a prefilled branchSetups[${index}]`);
+    if (!Number.isInteger(index) || index < 0 || index > (state.data.branchSetups?.length ?? 0)) {
+        throw new Error('branchIndex must select an existing branch or the next index to append');
     }
     return `branchSetups.${index}`;
 }
@@ -228,7 +268,7 @@ export function processHtml(
 ): Promise<SetupImportState> {
     return readHtmlFields(html, options).then(fields => {
         const branch = branchPrefix(state, options);
-        const { add, commit } = collector(state);
+        const { add, commit } = collector(state, branch);
         Object.entries(htmlOrganization).forEach(([source, target]) =>
             add(`organizationSetup.${target}`, fields[source]));
         add(`${branch}.General.firma`, fields.dealer_name);
@@ -283,7 +323,7 @@ export function processCsv(
             throw new Error(`Wheel service not found: ${options.wheelServiceId}`);
         }
         const wheelService = options.wheelServiceId ?? services[0];
-        const { add, commit } = collector(state);
+        const { add, commit } = collector(state, branch);
         rows.filter(row => row.Interface === 'Database ID').forEach(row =>
             add('organizationSetup.LegacyTKP.databaseId', row.cClientID));
         branchRows.forEach(row => {
@@ -323,3 +363,4 @@ export function processSetupFile(
         throw new Error(`Unsupported file type: ${file.type}`);
     });
 }
+
