@@ -4,10 +4,17 @@ import type { AutomaticSetupSessionData, BranchSetupType } from '../../../dbacc/
 import { Factory } from '../../../factory';
 import { getBrowser } from '../prettyPrint/html2pdf';
 
-// One instance per organization. Reuse it while importing that organization's files.
+// One instance per organization/import session. Process its files sequentially.
+// Conflicts are tracked across all setter calls in this instance, including false/0.
 // Only processHtml/processCsv and their readers return promises.
 // All setters, defaults, inheritance, and object updates are synchronous.
 // Existing defaults must be fresh, complete, plain objects with a plain Settings object.
+
+type Primitive = string | number | boolean;
+export type DeepConflicts<T> =
+    NonNullable<T> extends Primitive ? NonNullable<T>[] :
+    NonNullable<T> extends ReadonlyArray<infer U> ? Partial<Record<number, DeepConflicts<U>>> :
+    { [K in keyof T]?: DeepConflicts<T[K]> };
 
 type Organization = AutomaticSetupSessionData['organizationSetup'];
 type BranchDetails = BranchSetupType['BranchDetails'];
@@ -26,14 +33,6 @@ const dmsInterfaces = [
     'xPartsAvailability', 'xPriceInformation', 'xCarDataReadings',
 ] as const;
 
-// Missing/blank source fields leave defaults unchanged; false and 0 are assigned.
-function assignPresent<T extends object>(target: T, values: Partial<T>): void {
-    Object.entries(values).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && value !== '') {
-            Object.assign(target, { [key]: value });
-        }
-    });
-}
 function text(value: unknown): string | undefined {
     return value === undefined || value === null || value === '' ? undefined : String(value);
 }
@@ -46,9 +45,12 @@ function boolean(value: unknown): boolean | undefined {
 
 export class AutomaticSetupParser {
     // Shared HTML branch defaults, needed when CSV branches arrive after the HTML.
-    private htmlFields: HtmlFields = {};
-    private analytics?: boolean;
-    private externalWheelStorage?: boolean;
+    private htmlFields: HtmlFields[] = [];
+    private analytics: boolean[] = [];
+    private externalWheelStorage: boolean[] = [];
+    // Object identity keeps branches independent, even before they are appended.
+    // Defaults are not evidence; only assignments made through setters are tracked.
+    private assigned = new WeakMap<object, Record<string, Primitive[]>>();
 
     constructor(
         public readonly data: AutomaticSetupSessionData,
@@ -56,78 +58,125 @@ export class AutomaticSetupParser {
             Factory.getInstance().getBzl().AutomaticSetupSessionBzl.getDefaultBranchSetup(),
     ) {}
 
+    /** All future setters should use this helper. Blank source values are ignored.
+     * Once conflicting, a field stays empty for the remainder of this session.
+     */
+    public assignValue(target: object, key: string, value: unknown): void {
+        if (value === undefined || value === null || value === '') return;
+        if (typeof value !== 'string' && typeof value !== 'boolean' &&
+            !(typeof value === 'number' && Number.isFinite(value))) {
+            throw new Error(`Expected a primitive value for ${key}`);
+        }
+        if (['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error(`Invalid key: ${key}`);
+        let fields = this.assigned.get(target);
+        if (!fields) {
+            fields = Object.create(null) as Record<string, Primitive[]>;
+            this.assigned.set(target, fields);
+        }
+        const values = fields[key] ?? (fields[key] = []);
+        if (!values.includes(value)) values.push(value);
+        const first = values[0];
+        const empty = typeof first === 'boolean' ? false : typeof first === 'number' ? 0 : '';
+        Object.assign(target, { [key]: values.length > 1 ? empty : value });
+    }
+
+    public assignPresent<T extends object>(target: T, values: Partial<T>): void {
+        Object.entries(values).forEach(([key, value]) => this.assignValue(target, key, value));
+    }
+
+    /** JSON-serializable snapshot with the same nesting as data.
+     * Read after imports; snapshots do not update themselves. Keep this parser instance
+     * for the entire session and do not replace its nested data objects externally.
+     */
+    public get conflicts(): DeepConflicts<AutomaticSetupSessionData> {
+        const collect = (node: object): Record<string, unknown> => {
+            const result: Record<string, unknown> = {};
+            const fields = this.assigned.get(node);
+            Object.entries(node).forEach(([key, value]) => {
+                const values = fields?.[key];
+                if (values && values.length > 1) result[key] = [...values];
+                else if (value && typeof value === 'object') {
+                    const children = collect(value);
+                    if (Object.keys(children).length) result[key] = children;
+                }
+            });
+            return result;
+        };
+        return collect(this.data) as DeepConflicts<AutomaticSetupSessionData>;
+    }
+
     // ORGANIZATION SETTERS ---------------------------------------------------
 
     public setOrganizationGeneral(values: Partial<Organization['OrganizationDetails']['General']>): void {
-        assignPresent(this.data.organizationSetup.OrganizationDetails.General, values);
+        this.assignPresent(this.data.organizationSetup.OrganizationDetails.General, values);
     }
 
     public setDatabaseId(databaseId: string): void {
-        this.data.organizationSetup.OrganizationDetails.LegacyTKP.databaseId = databaseId;
+        this.assignValue(this.data.organizationSetup.OrganizationDetails.LegacyTKP, 'databaseId', databaseId);
     }
 
     public setSoftDrop(enabled: boolean): void {
-        this.data.organizationSetup.OrganizationDetails.OnlineComponents.softDrop = enabled;
-        this.data.organizationSetup.Settings.JobToc.isDropEnabled = String(enabled);
+        this.assignValue(this.data.organizationSetup.OrganizationDetails.OnlineComponents, 'softDrop', enabled);
+        this.assignValue(this.data.organizationSetup.Settings.JobToc, 'isDropEnabled', String(enabled));
     }
 
     public setSoftCheckout(enabled: boolean): void {
-        this.data.organizationSetup.OrganizationDetails.OnlineComponents.softCheckout = enabled;
-        this.data.organizationSetup.Settings.JobToc.isDropCheckoutEnabled = String(enabled);
+        this.assignValue(this.data.organizationSetup.OrganizationDetails.OnlineComponents, 'softCheckout', enabled);
+        this.assignValue(this.data.organizationSetup.Settings.JobToc, 'isDropCheckoutEnabled', String(enabled));
     }
 
     public setSoftConfirm(enabled: boolean): void {
-        this.data.organizationSetup.OrganizationDetails.OnlineComponents.softConfirm = enabled;
-        this.data.organizationSetup.Settings.JobToc.isRtxEnabled = String(enabled);
+        this.assignValue(this.data.organizationSetup.OrganizationDetails.OnlineComponents, 'softConfirm', enabled);
+        this.assignValue(this.data.organizationSetup.Settings.JobToc, 'isRtxEnabled', String(enabled));
     }
 
     public setSoftChat(enabled: boolean): void {
-        this.data.organizationSetup.OrganizationDetails.OnlineComponents.softChat = enabled;
-        this.data.organizationSetup.Settings.JobToc.isChatEnabled = String(enabled);
+        this.assignValue(this.data.organizationSetup.OrganizationDetails.OnlineComponents, 'softChat', enabled);
+        this.assignValue(this.data.organizationSetup.Settings.JobToc, 'isChatEnabled', String(enabled));
     }
 
     public setAnalytics(enabled: boolean): void {
-        this.analytics = enabled;
-        this.data.organizationSetup.OrganizationDetails.OnlineComponents.softAnalytics = enabled;
+        if (!this.analytics.includes(enabled)) this.analytics.push(enabled);
+        this.assignValue(this.data.organizationSetup.OrganizationDetails.OnlineComponents, 'softAnalytics', enabled);
         (this.data.branchSetups ?? []).forEach(branch => this.setBranchAnalytics(branch, enabled));
     }
 
     public setExternalWheelStorage(enabled: boolean): void {
-        this.externalWheelStorage = enabled;
-        this.data.organizationSetup.OrganizationDetails.ExternalInterfaces.xStorage = enabled;
+        if (!this.externalWheelStorage.includes(enabled)) this.externalWheelStorage.push(enabled);
+        this.assignValue(this.data.organizationSetup.OrganizationDetails.ExternalInterfaces, 'xStorage', enabled);
         (this.data.branchSetups ?? []).forEach(branch => this.setBranchExternalWheelStorage(branch, enabled));
     }
 
     // BRANCH SETTERS ---------------------------------------------------------
 
     public setBranchGeneral(branch: BranchSetupType, values: Partial<BranchDetails['General']>): void {
-        assignPresent(branch.BranchDetails.General, values);
+        this.assignPresent(branch.BranchDetails.General, values);
     }
 
     public setBranchDealer(branch: BranchSetupType, values: Partial<BranchDetails['DealerInformation']>): void {
-        assignPresent(branch.BranchDetails.DealerInformation, values);
+        this.assignPresent(branch.BranchDetails.DealerInformation, values);
     }
 
     public setBranchAnalytics(branch: BranchSetupType, enabled: boolean): void {
-        branch.Settings.Analytics.analyticsDesire = String(enabled);
+        this.assignValue(branch.Settings.Analytics, 'analyticsDesire', String(enabled));
     }
 
     public setBranchExternalWheelStorage(branch: BranchSetupType, enabled: boolean): void {
-        branch.BranchDetails.xWheels.enabled = enabled;
+        this.assignValue(branch.BranchDetails.xWheels, 'enabled', enabled);
     }
 
     public setBranchWheels(branch: BranchSetupType, values: Partial<BranchDetails['xWheels']>): void {
-        assignPresent(branch.BranchDetails.xWheels, values);
+        this.assignPresent(branch.BranchDetails.xWheels, values);
     }
 
     public setBranchBMWSettings(branch: BranchSetupType, values: Partial<BranchSetupType['Settings']['BMWSettings']>): void {
-        assignPresent(branch.Settings.BMWSettings, values);
+        this.assignPresent(branch.Settings.BMWSettings, values);
     }
 
     public setBranchDms(branch: BranchSetupType, values: DmsValues): void {
         const { DMSCompanyNumber, ...dealerValues } = values;
         this.setBranchDealer(branch, dealerValues);
-        dmsInterfaces.forEach(service => assignPresent(branch.BranchDetails[service], values));
+        dmsInterfaces.forEach(service => this.assignPresent(branch.BranchDetails[service], values));
         this.setBranchBMWSettings(branch, {
             FIRM: DMSCompanyNumber,
             BRANCH: values.DMSBranchNumber,
@@ -146,7 +195,7 @@ export class AutomaticSetupParser {
      * Never assign another branch's entire nested object by reference.
      */
     public inheritBranch(branch: BranchSetupType): void {
-        this.applyHtmlBranch(this.htmlFields, branch);
+        this.htmlFields.forEach(fields => this.applyHtmlBranch(fields, branch));
         this.applySharedComponents(branch);
     }
 
@@ -165,14 +214,14 @@ export class AutomaticSetupParser {
     }
 
     public applySharedComponents(branch: BranchSetupType): void {
-        if (this.analytics !== undefined) this.setBranchAnalytics(branch, this.analytics);
-        if (this.externalWheelStorage !== undefined) this.setBranchExternalWheelStorage(branch, this.externalWheelStorage);
+        this.analytics.forEach(enabled => this.setBranchAnalytics(branch, enabled));
+        this.externalWheelStorage.forEach(enabled => this.setBranchExternalWheelStorage(branch, enabled));
     }
 
     // SYNCHRONOUS HTML MAPPING -----------------------------------------------
 
     public applyHtml(fields: HtmlFields): AutomaticSetupSessionData {
-        this.htmlFields = fields;
+        this.htmlFields.push({ ...fields });
         this.applyHtmlOrganization(fields);
         (this.data.branchSetups ?? []).forEach(branch => this.applyHtmlBranch(fields, branch));
         return this.data;
