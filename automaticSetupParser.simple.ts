@@ -50,14 +50,55 @@ export class AutomaticSetupParser {
     private analytics: boolean[] = [];
     private externalWheelStorage: boolean[] = [];
     // Object identity keeps branches independent, even before they are appended.
-    // Defaults are not evidence; only assignments made through setters are tracked.
+    // Existing populated fields and subsequent setter assignments are tracked.
+    // Newly created branch defaults are not seeded as imported evidence.
     private assigned = new WeakMap<object, Record<string, Primitive[]>>();
 
     constructor(
         public readonly data: AutomaticSetupSessionData,
         private readonly createBranchDefaults: () => BranchSetupType = () =>
             Factory.getInstance().getBzl().AutomaticSetupSessionBzl.getDefaultBranchSetup(),
-    ) {}
+        // Optional pristine defaults distinguish configured defaults (e.g. "false")
+        // from completed values. Without them, nonempty strings, true and nonzero
+        // numbers already in data are considered completed.
+        initialDefaults?: AutomaticSetupSessionData,
+    ) {
+        this.trackExistingData(data, initialDefaults);
+    }
+
+    private trackExistingData(target: object, defaults?: unknown): void {
+        Object.entries(target).forEach(([key, value]) => {
+            const defaultValue = defaults && typeof defaults === 'object'
+                ? (defaults as Record<string, unknown>)[key] : undefined;
+            if (value && typeof value === 'object') {
+                this.trackExistingData(value, defaultValue);
+            } else if (typeof value === 'string' || typeof value === 'boolean' ||
+                (typeof value === 'number' && Number.isFinite(value))) {
+                const empty = typeof value === 'boolean' ? false : typeof value === 'number' ? 0 : '';
+                if (value !== (defaultValue === undefined ? empty : defaultValue)) {
+                    this.markCompleted(target, key);
+                }
+            }
+        });
+    }
+
+    /** Call before importing to mark an existing false/0/empty string as intentional.
+     * Does not overwrite an existing assignment history or resolve conflicts.
+     */
+    public markCompleted(target: object, key: string): void {
+        if (['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error(`Invalid key: ${key}`);
+        const value = (target as Record<string, unknown>)[key];
+        if (typeof value !== 'string' && typeof value !== 'boolean' &&
+            !(typeof value === 'number' && Number.isFinite(value))) {
+            throw new Error(`Expected a primitive value for ${key}`);
+        }
+        let fields = this.assigned.get(target);
+        if (!fields) {
+            fields = Object.create(null) as Record<string, Primitive[]>;
+            this.assigned.set(target, fields);
+        }
+        if (!fields[key]) fields[key] = [value];
+    }
 
     /** All future setters should use this helper. Blank source values are ignored.
      * Once conflicting, a field stays empty for the remainder of this session.
@@ -137,15 +178,19 @@ export class AutomaticSetupParser {
     }
 
     public setAnalytics(enabled: boolean): void {
-        if (!this.analytics.includes(enabled)) this.analytics.push(enabled);
-        this.assignValue(this.data.organizationSetup.OrganizationDetails.OnlineComponents, 'softAnalytics', enabled);
-        (this.data.branchSetups ?? []).forEach(branch => this.setBranchAnalytics(branch, enabled));
+        const components = this.data.organizationSetup.OrganizationDetails.OnlineComponents;
+        this.assignValue(components, 'softAnalytics', enabled);
+        this.analytics = this.assigned.get(components)!.softAnalytics as boolean[];
+        (this.data.branchSetups ?? []).forEach(branch =>
+            this.analytics.forEach(value => this.setBranchAnalytics(branch, value)));
     }
 
     public setExternalWheelStorage(enabled: boolean): void {
-        if (!this.externalWheelStorage.includes(enabled)) this.externalWheelStorage.push(enabled);
-        this.assignValue(this.data.organizationSetup.OrganizationDetails.ExternalInterfaces, 'xStorage', enabled);
-        (this.data.branchSetups ?? []).forEach(branch => this.setBranchExternalWheelStorage(branch, enabled));
+        const interfaces = this.data.organizationSetup.OrganizationDetails.ExternalInterfaces;
+        this.assignValue(interfaces, 'xStorage', enabled);
+        this.externalWheelStorage = this.assigned.get(interfaces)!.xStorage as boolean[];
+        (this.data.branchSetups ?? []).forEach(branch =>
+            this.externalWheelStorage.forEach(value => this.setBranchExternalWheelStorage(branch, value)));
     }
 
     // BRANCH SETTERS ---------------------------------------------------------
