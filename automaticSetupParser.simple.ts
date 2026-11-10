@@ -3,6 +3,7 @@ import * as puppeteer from 'puppeteer';
 import type { AutomaticSetupSessionData, BranchSetupType } from '../../../dbacc/types/automaticSetup/AutomaticSetupSessionTypes';
 import { Factory } from '../../../factory';
 import { getBrowser } from '../prettyPrint/html2pdf';
+import { createBranch } from './createBranch';
 
 // One instance per organization/import session. Process its files sequentially.
 // Conflicts are tracked across all setter calls in this instance, including false/0.
@@ -185,28 +186,13 @@ export class AutomaticSetupParser {
         });
     }
 
-    // BRANCH CREATION / INHERITANCE ------------------------------------------
+    // SESSION IMPORT VALUES / APPENDING -------------------------------------
 
-    /** Extend this method to copy chosen fields from the organization/other branches.
-     * For example:
-     * this.setBranchGeneral(branch, {
-     *     preferredLanguage: this.data.organizationSetup.OrganizationDetails.General.preferredLanguage,
-     * });
-     * Never assign another branch's entire nested object by reference.
-     */
-    public inheritBranch(branch: BranchSetupType): void {
+    public addBranch(
+        branch: BranchSetupType = createBranch(this.data.organizationSetup, this.createBranchDefaults),
+    ): BranchSetupType {
+        // Creation is standalone; replaying source evidence belongs to the import session.
         this.htmlFields.forEach(fields => this.applyHtmlBranch(fields, branch));
-        this.applySharedComponents(branch);
-    }
-
-    public createBranch(): BranchSetupType {
-        const branch = this.createBranchDefaults();
-        this.inheritBranch(branch);
-        return branch;
-    }
-
-    public addBranch(branch: BranchSetupType = this.createBranch()): BranchSetupType {
-        // Explicit shared component choices also apply to branches added later.
         this.applySharedComponents(branch);
         if (!this.data.branchSetups) this.data.branchSetups = [];
         this.data.branchSetups.push(branch);
@@ -256,7 +242,9 @@ export class AutomaticSetupParser {
 
     public applyCsv(rows: CsvRow[]): AutomaticSetupSessionData {
         if (!rows.some(row => row.Interface === 'Branches')) throw new Error('CSV has no Branches row');
-        const branch = this.createBranch();
+        const branch = createBranch(this.data.organizationSetup, this.createBranchDefaults);
+        this.htmlFields.forEach(fields => this.applyHtmlBranch(fields, branch));
+        this.applySharedComponents(branch);
         rows.forEach(row => {
             if (row.Interface === 'Branches') this.applyCsvBranch(row, branch);
             if (row.Interface === 'DMS parameters') this.applyCsvDms(row, branch);
