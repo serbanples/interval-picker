@@ -1,7 +1,6 @@
 import { parseString } from 'fast-csv';
 import * as puppeteer from 'puppeteer';
 import type { AutomaticSetupSessionData, BranchSetupType } from '../../../dbacc/types/automaticSetup/AutomaticSetupSessionTypes';
-import { Factory } from '../../../factory';
 import { getBrowser } from '../prettyPrint/html2pdf';
 import { createBranch } from './createBranch';
 
@@ -54,28 +53,20 @@ export class AutomaticSetupParser {
     // Newly created branch defaults are not seeded as imported evidence.
     private assigned = new WeakMap<object, Record<string, Primitive[]>>();
 
-    constructor(
-        public readonly data: AutomaticSetupSessionData,
-        private readonly createBranchDefaults: () => BranchSetupType = () =>
-            Factory.getInstance().getBzl().AutomaticSetupSessionBzl.getDefaultBranchSetup(),
-        // Optional pristine defaults distinguish configured defaults (e.g. "false")
-        // from completed values. Without them, nonempty strings, true and nonzero
-        // numbers already in data are considered completed.
-        initialDefaults?: AutomaticSetupSessionData,
-    ) {
-        this.trackExistingData(data, initialDefaults);
+    constructor(public readonly data: AutomaticSetupSessionData) {
+        this.trackExistingData(data);
     }
 
-    private trackExistingData(target: object, defaults?: unknown): void {
+    // Only '', false and 0 are initial empty defaults. The strings "false" and "0"
+    // are populated values. Once imported, false/0 are tracked like any other value.
+    private trackExistingData(target: object): void {
         Object.entries(target).forEach(([key, value]) => {
-            const defaultValue = defaults && typeof defaults === 'object'
-                ? (defaults as Record<string, unknown>)[key] : undefined;
             if (value && typeof value === 'object') {
-                this.trackExistingData(value, defaultValue);
+                this.trackExistingData(value);
             } else if (typeof value === 'string' || typeof value === 'boolean' ||
                 (typeof value === 'number' && Number.isFinite(value))) {
                 const empty = typeof value === 'boolean' ? false : typeof value === 'number' ? 0 : '';
-                if (value !== (defaultValue === undefined ? empty : defaultValue)) {
+                if (value !== empty) {
                     this.markCompleted(target, key);
                 }
             }
@@ -234,7 +225,7 @@ export class AutomaticSetupParser {
     // SESSION IMPORT VALUES / APPENDING -------------------------------------
 
     public addBranch(
-        branch: BranchSetupType = createBranch(this.data.organizationSetup, this.createBranchDefaults),
+        branch: BranchSetupType = createBranch(this.data.organizationSetup),
     ): BranchSetupType {
         // Creation is standalone; replaying source evidence belongs to the import session.
         this.htmlFields.forEach(fields => this.applyHtmlBranch(fields, branch));
@@ -287,7 +278,7 @@ export class AutomaticSetupParser {
 
     public applyCsv(rows: CsvRow[]): AutomaticSetupSessionData {
         if (!rows.some(row => row.Interface === 'Branches')) throw new Error('CSV has no Branches row');
-        const branch = createBranch(this.data.organizationSetup, this.createBranchDefaults);
+        const branch = createBranch(this.data.organizationSetup);
         this.htmlFields.forEach(fields => this.applyHtmlBranch(fields, branch));
         this.applySharedComponents(branch);
         rows.forEach(row => {
