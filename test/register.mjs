@@ -5,7 +5,7 @@ registerHooks({
   resolve(specifier, context, nextResolve) {
     // Pure helpers are tested against explicit defaults; external IO must never run.
     const boundary = {
-      '../../../factory': 'export const Factory = { getInstance() { throw Error("Supply a test defaults factory"); } };',
+      '../../../factory': 'let defaults; export function setTestBranchFactory(fn) { defaults = fn; } export const Factory = { getInstance() { if (!defaults) throw Error("Supply a test defaults factory"); return { getBzl() { return { AutomaticSetupSessionBzl: { getDefaultBranchSetup: () => defaults() } }; } }; } };',
       'fast-csv': 'export function parseString() { throw Error("CSV IO is outside this test"); }',
       'puppeteer': 'export {};',
       '../prettyPrint/html2pdf': 'export function getBrowser() { throw Error("Browser IO is outside this test"); }',

@@ -19,6 +19,7 @@ const array = (items: ServiceSchemaNode): ServiceSchemaNode => ({ type: 'array',
 export function createXServiceSchemas(overrides: Partial<Record<XServiceKey, ServiceSchema>> = {}): Record<XServiceKey, ServiceSchema> {
     return Object.fromEntries(xServiceKeys.map(key => {
         const schema: ServiceSchema = {
+            handlerParameters: object(), bmwSelection: object(), bmwCatalogHeaderRequired: bool(),
             name: { type: 'text', required: true }, description: text(), enabled: bool(), global: bool(),
             handler: text(), baseURL: text(), authentication: object(), dlcId: text(), clientCertificateId: text(),
             headers: array(object()), httpHeaders: array(object()), clientCertificate: object(),
@@ -71,4 +72,15 @@ export function validateXServiceSchema(value: unknown, schema: ServiceSchema): S
         }
     });
     return errors;
+}
+
+/** ATBAS belongs to a separate backend writer, not the xService type enum. */
+export function createAtbasSchema(): ServiceSchema {
+    return {
+        name: { type: 'text', required: true }, description: text(), enabled: bool(),
+        baseUrl: { type: 'text', required: true }, authenticationType: { type: 'text', required: true },
+        authenticationUser: { type: 'text', required: true }, authentication: { type: 'object', required: true },
+        ScopingAppointment: bool(), ScopingCustomer: bool(), ScopingOrders: bool(),
+        ScopingRepairDetails: bool(), ScopingVehicle: bool(),
+    };
 }

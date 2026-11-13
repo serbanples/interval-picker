@@ -147,3 +147,103 @@ npx -p typescript@5.7.3 tsc --noEmit --strict --target es2022 --module commonjs 
 The fixture deliberately keeps unavailable backend types opaque. It is test-only;
 do not include it in an application build. This check is not a substitute for
 compiling against the actual backend barrel, settings types and BZL implementation.
+
+## BMW linkage after HTML/CSV processing
+
+The trigger is now the **resolved branch DMS value**, not a manual BMW toggle:
+
+```ts
+branch.BranchDetails.DealerInformation?.DMS?.trim() === 'formel1'
+```
+
+`AutomaticSetupParser.applyHtml` and `applyCsv` call `finalizeImport()` after their
+source assignments and conflict handling. Their asynchronous `processHtml` and
+`processCsv` wrappers therefore return the linked data too. CSV DMS parameters
+support the explicit option `cOptionID: 'DMS', cValue: 'formel1'`; HTML uses its
+existing `dms_name` mapping. No service handler or BMW flag is used to infer DMS.
+A conflicting DMS that resolves to `''` does not activate BMW linkage.
+
+Only matching branches receive the BMW branch settings, services and ATBAS setup.
+If any branch matches, the organization BMW flag, the seven interface flags and
+all organization settings in `bmwOrganizationSettings` are applied. `xPoolOpType`,
+wheel storage and rental are not added by this BMW profile.
+
+`BmwLinkageTracker` restores prior derived values before the next source import,
+while retaining later explicit edits. This keeps derived names, flags, endpoints
+and settings out of source conflict tracking. If a later HTML/CSV file introduces
+a DMS conflict, BMW values generated earlier in the same parser session are removed.
+The tracker belongs to that parser instance; it is not a persisted migration or a
+reverse-BMW operation on previously saved sessions.
+
+A manually added branch gets the usual organization defaults. It receives the BMW
+profile only when `finalizeImport()` sees its own DMS as `formel1`. A manual BMW flag
+alone does not apply the profile. The older alternative parsers in this repository
+are retained as historical snippets; this linkage is wired into the latest simple parser.
+
+### Profile data and remaining application inputs
+
+`applyBmwLinkage.ts` includes the complete organization/branch settings checklist,
+service names, config booleans, URLs and logical handler parameters. Existing string
+boolean settings retain their representation; missing settings use actual booleans.
+Full nested `serviceConfig`/`handlerConfig` representations are updated alongside
+flat import fields so stale nested values cannot override the profile.
+
+The supplied backend enum spellings are authoritative:
+
+| Checklist spelling | Backend value used |
+| --- | --- |
+| `ispa5order` | `ispa5orders` |
+| `ispa5partsAvailability` | `ispa5PartsAvailability` |
+| `bmwCarDataReadings` | `BMWKeyReadings` |
+
+`SERVICECASE_HEADER_BUSINESSCONTEXTv` is retained literally, including the trailing
+`v`, because no backend parameter definition was supplied to justify changing it.
+
+Configure deployment-specific values before processing:
+
+```ts
+parser.bmwLinkageOptions = {
+    catalogHttpHeader: configuredCatalogHttpHeader,
+    atbasBaseUrl: completeAtbasUrl,
+    atbasAuthentication: configuredBasicAuthentication,
+};
+
+return parser.processCsv(csv).then(() => parser.processHtml(html)).then(data => {
+    // These are editable validation issues, not fabricated endpoint/credential defaults.
+    const issues = parser.bmwLinkageResult.issues;
+    return { data, issues };
+});
+```
+
+The specification's ATBAS URL ends in `notifyAp…` and cannot be reconstructed.
+The catalog entry `application soft-planning` does not unambiguously specify a
+header name/value. Those inputs, a valid DMS IP/host, and the actual Basic auth
+object are exposed as issues when missing. The username intention is `softplanning`;
+no password is invented. `createAtbasSchema()` supplies its import/UI schema.
+
+### Creation adapters
+
+In addition to the existing defaults/legacy handler adapters, BMW creation requires:
+
+- `resolveBmwSelection(key, selection, handlerConfig)`: resolve User/Type dropdown
+  intentions to actual configured options and authentication. `selectBmwOption`
+  supports unique ISPA5 matching, exact user labels, and the price-information
+  fallback. Missing or ambiguous options throw rather than picking an arbitrary one.
+- `resolveHandlerParameters(key, parameters, currentHeaders)`: upsert `LANGUAGE`,
+  AWP auth-header parameters and order flags into the actual backend `HttpHeader`
+  structure. Logical parameters are kept in `section.handlerParameters` until then.
+- `writer.createAtbas(context, setup, organizationId, branchId)`: persist the separate
+  ATBAS integration, which has no member in the supplied external-service enum.
+
+The resolver cannot override the linked BMW endpoint. Profile HTTP headers and
+encoded handler parameters are preserved in the created payload. If the exact
+catalog header is supplied only at creation, use `catalogApplicationHeader` in the
+build options. Complete ATBAS URL/authentication and all required adapters are
+checked before any service writes. ATBAS is written after external services are
+published; the returned array still contains external-service documents only.
+The real ATBAS backend type/API was not supplied, so its adapter receives the typed
+setup and performs the application-specific mapping.
+
+These are application adapter boundaries, not guessed backend account IDs, header
+formats or ATBAS document fields. The consuming backend build and BZL wiring are
+still required outside this snippets repository.

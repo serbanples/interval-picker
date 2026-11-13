@@ -1,3 +1,4 @@
+import type { AtbasSetup, BmwServiceSelection } from './bmwLinkageTypes';
 import type {
     ExternalServiceCreate, StandardHandlerConfig, xCarDataReadingsHandlerConfig,
     StandardHandlerConfigWthBrandMapping, StandardHandlerConfigWthMandatoryFields,
@@ -27,6 +28,10 @@ export type StandardSetupHandlerConfig = StandardHandlerConfig &
     xCarDataReadingsHandlerConfig;
 
 export interface XServiceSetupBase {
+    /** Profile parameters are encoded through the actual backend HttpHeader adapter. */
+    handlerParameters?: Record<string, string>;
+    bmwSelection?: BmwServiceSelection;
+    bmwCatalogHeaderRequired?: boolean;
     name: string;
     description?: string;
     enabled: boolean;
@@ -62,7 +67,7 @@ export interface XServiceSetupBase {
 /** Flat service options preserve existing import/UI paths. Full config is also supported. */
 export type XServiceSetup<K extends XServiceKey> = XServiceSetupBase &
     Partial<XServiceConfigMap[K]> & { serviceConfig?: XServiceConfigMap[K] };
-export type BranchXServices = { [K in XServiceKey]?: XServiceSetup<K> };
+export type BranchXServices = { [K in XServiceKey]?: XServiceSetup<K> } & { ATBAS?: AtbasSetup };
 export type CompleteXServices = { [K in XServiceKey]: XServiceSetup<K> };
 
 /** UI schema supports nested objects and arrays; existing primitive RowType remains valid. */
@@ -73,4 +78,4 @@ export type ConfigSchema<T> =
     NonNullable<T> extends ReadonlyArray<infer Item> ? { type: 'array'; items: ConfigSchema<Item>; required?: boolean } :
     { type: 'object'; fields?: ConfigObjectSchema<T>; required?: boolean };
 export type ConfigObjectSchema<T> = { [K in keyof NonNullable<T>]?: ConfigSchema<NonNullable<T>[K]> };
-export type BranchXServicesSchema = { [K in XServiceKey]: ConfigObjectSchema<XServiceSetup<K>> };
+export type BranchXServicesSchema = { [K in XServiceKey]: ConfigObjectSchema<XServiceSetup<K>> } & { ATBAS?: ConfigObjectSchema<AtbasSetup> };

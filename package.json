@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --import ./test/register.mjs --test test/xServices.test.ts"
+    "test": "node --import ./test/register.mjs --test test/*.test.ts"
   },
   "engines": { "node": ">=24" }
 }

@@ -1,3 +1,4 @@
+import type { AtbasSetup, BmwServiceSelection } from './bmwLinkageTypes';
 import type { ExternalServiceCreate } from '../../../dbacc/types';
 import type { BranchXServices, StandardSetupHandlerConfig, XServiceKey, XServiceSetupBase } from './xServiceSetupTypes';
 import { serviceConfigDefaults, xServiceDefinitions, xServiceKeys } from './xServiceDefaults';
@@ -11,6 +12,12 @@ export interface ServiceBuildOptions {
         handler: ExternalServiceCreate['handler'], config: HandlerConfig) => HandlerConfig;
     /** Disabled editing placeholders are excluded by default. */
     includeDisabled?: boolean;
+    /** Resolve configured User/Type dropdown selections to the application's handler config. */
+    resolveBmwSelection?: (key: XServiceKey, selection: BmwServiceSelection, config: HandlerConfig) => HandlerConfig;
+    /** Upsert logical handler parameters using the real backend HttpHeader structure. */
+    resolveHandlerParameters?: (key: XServiceKey, parameters: Record<string, string>,
+        headers: StandardSetupHandlerConfig['headers']) => NonNullable<StandardSetupHandlerConfig['headers']>;
+    catalogApplicationHeader?: NonNullable<StandardSetupHandlerConfig['httpHeaders']>[number];
 }
 
 const handlers: Record<XServiceKey, readonly string[]> = {
@@ -39,12 +46,23 @@ function defined(value: object): Record<string, unknown> {
     return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
 }
 
+export function assertAtbasReady(atbas: AtbasSetup | undefined): void {
+    if (!atbas?.enabled) return;
+    let validUrl = false;
+    try { validUrl = ['http:', 'https:'].includes(new URL(atbas.baseUrl).protocol); } catch { /* reported below */ }
+    if (!validUrl || /…|\.\.\./.test(atbas.baseUrl)) throw new Error('ATBAS: complete baseUrl is required');
+    if (atbas.authenticationType !== 'basic' || atbas.authenticationUser !== 'softplanning' || !atbas.authentication) {
+        throw new Error('ATBAS: backend Basic authentication configuration for softplanning is required');
+    }
+}
+
 /** Pure conversion: validate/build the entire branch before performing any writes. */
 export function buildExternalServices(
     details: BranchXServices,
     organization: NonNullable<ExternalServiceCreate['organization']>,
     options: ServiceBuildOptions = {},
 ): ExternalServiceCreate[] {
+    assertAtbasReady(details.ATBAS);
     const result: ExternalServiceCreate[] = [];
     xServiceKeys.forEach(key => {
         const setup = details[key];
@@ -52,6 +70,7 @@ export function buildExternalServices(
         if (typeof setup.authentication === 'string') {
             throw new Error(`${key}: authentication must be an HttpAuthentication object; remove legacy empty strings`);
         }
+        if (setup.bmwSelection && !setup.baseURL) throw new Error(`${key}: BMW endpoint requires a valid DMS host/IP`);
         const definition = xServiceDefinitions[key];
         const handler = (setup.handler || definition.handler) as ExternalServiceCreate['handler'];
         if (!handler) throw new Error(`${key}: an explicit handler is required`);
@@ -102,6 +121,23 @@ export function buildExternalServices(
         if (options.resolveLegacyHandler) {
             handlerConfig = options.resolveLegacyHandler(key, clone(setup), handler, clone(handlerConfig));
         }
+        if (setup.bmwSelection) {
+            if (!options.resolveBmwSelection) throw new Error(`${key}: resolveBmwSelection is required for the configured User/Type dropdown`);
+            handlerConfig = options.resolveBmwSelection(key, clone(setup.bmwSelection), clone(handlerConfig));
+            handlerConfig = { ...handlerConfig, baseURL: setup.baseURL,
+                ...(setup.httpHeaders?.length ? { httpHeaders: clone(setup.httpHeaders) } : {}),
+            } as HandlerConfig;
+        }
+        if (setup.handlerParameters && Object.keys(setup.handlerParameters).length) {
+            if (!options.resolveHandlerParameters) throw new Error(`${key}: resolveHandlerParameters is required to encode handler parameters`);
+            const standard = handlerConfig as StandardSetupHandlerConfig;
+            handlerConfig = { ...standard, headers: options.resolveHandlerParameters(key, clone(setup.handlerParameters), clone(standard.headers)) };
+        }
+        if (setup.bmwCatalogHeaderRequired) {
+            if (!options.catalogApplicationHeader) throw new Error(`${key}: exact catalog application HTTP header is required`);
+            const standard = handlerConfig as StandardSetupHandlerConfig;
+            handlerConfig = { ...standard, httpHeaders: [...(standard.httpHeaders ?? []), clone(options.catalogApplicationHeader)] };
+        }
         result.push(clone({
             // Do not spread factory identity/version/certificate references into a new service.
             organization, global: setup.global ?? defaults?.global ?? false,
@@ -118,6 +154,8 @@ export function buildExternalServices(
 export interface ExternalServiceWriter<Context, Created extends { _id: string }> {
     create: (context: Context, data: ExternalServiceCreate) => PromiseLike<Created>;
     publishOnBranches: (context: Context, ids: string[], branchIds: string[]) => PromiseLike<unknown>;
+    /** Separate backend integration: ATBAS is not an ExternalServiceTypeEnum member. */
+    createAtbas?: (context: Context, setup: AtbasSetup, organization: NonNullable<ExternalServiceCreate['organization']>, branchId: string) => PromiseLike<unknown>;
 }
 
 /** Replacement for separate DMS/wheels creation loops. Preserves create -> publish order. */
@@ -126,11 +164,16 @@ export function createExternalServices<Context, Created extends { _id: string }>
     details: BranchXServices, organization: NonNullable<ExternalServiceCreate['organization']>,
     branchId: string, options: ServiceBuildOptions = {},
 ): Promise<Created[]> {
-    return Promise.resolve().then(() => buildExternalServices(details, organization, options)).then(payloads =>
+    return Promise.resolve().then(() => {
+        if (details.ATBAS?.enabled && !writer.createAtbas) throw new Error('ATBAS: a createAtbas backend adapter is required');
+        return buildExternalServices(details, organization, options);
+    }).then(payloads =>
         payloads.reduce<Promise<Created[]>>((chain, payload) => chain.then(created =>
             Promise.resolve(writer.create(context, payload)).then(service =>
                 Promise.resolve(writer.publishOnBranches(context, [service._id], [branchId]))
                     .then(() => [...created, service])),
         ), Promise.resolve([])),
-    );
+    ).then(created => details.ATBAS?.enabled ?
+        Promise.resolve(writer.createAtbas!(context, clone(details.ATBAS), organization, branchId)).then(() => created) : created);
+
 }

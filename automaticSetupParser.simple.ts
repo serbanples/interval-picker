@@ -3,6 +3,8 @@ import * as puppeteer from 'puppeteer';
 import type { AutomaticSetupSessionData, BranchSetupType } from './AutomaticSetupSessionTypes';
 import { getBrowser } from '../prettyPrint/html2pdf';
 import { createBranch } from './createBranch';
+import { BmwLinkageTracker } from './bmwLinkageTracker';
+import type { BmwLinkageOptions, BmwLinkageResult } from './bmwLinkageTypes';
 import { createXServiceSetup } from './xServiceDefaults';
 import type { XServiceKey, XServiceSetup } from './xServiceSetupTypes';
 
@@ -56,6 +58,15 @@ export class AutomaticSetupParser {
     private assigned = new WeakMap<object, Record<string, Primitive[]>>();
 
     public readonly data: AutomaticSetupSessionData;
+    private readonly bmwLinkage = new BmwLinkageTracker();
+    public bmwLinkageOptions: BmwLinkageOptions = {};
+    public bmwLinkageResult: BmwLinkageResult = { appliedBranchIndexes: [], issues: [] };
+
+    /** Derived linkage runs after source/conflict assignments, never from a manual flag. */
+    public finalizeImport(): AutomaticSetupSessionData {
+        this.bmwLinkageResult = this.bmwLinkage.apply(this.data, this.bmwLinkageOptions);
+        return this.data;
+    }
 
     constructor(data: AutomaticSetupSessionData) {
         this.data = data;
@@ -220,6 +231,12 @@ export class AutomaticSetupParser {
     }
 
     public setBranchDealer(branch: BranchSetupType, values: Partial<BranchDetails['DealerInformation']>): void {
+        if (!branch.BranchDetails.DealerInformation) {
+            branch.BranchDetails.DealerInformation = {
+                dealerName: '', dealerNumber: '', outletNumber: '', DMS: '',
+                DMSCompanyName: '', DMSIP: '', DMSBranchNumber: '',
+            };
+        }
         this.assignPresent(branch.BranchDetails.DealerInformation, values);
     }
 
@@ -236,7 +253,9 @@ export class AutomaticSetupParser {
     }
 
     public setBranchBMWSettings(branch: BranchSetupType, values: Partial<BranchSetupType['Settings']['BMWSettings']>): void {
-        this.assignPresent(branch.Settings.BMWSettings, values);
+        const settings = branch.Settings as Record<string, unknown>;
+        if (!settings.BMWSettings) settings.BMWSettings = {};
+        this.assignPresent(settings.BMWSettings as object, values);
     }
 
     public setBranchDms(branch: BranchSetupType, values: DmsValues): void {
@@ -272,10 +291,11 @@ export class AutomaticSetupParser {
     // SYNCHRONOUS HTML MAPPING -----------------------------------------------
 
     public applyHtml(fields: HtmlFields): AutomaticSetupSessionData {
+        this.bmwLinkage.restore(this.data);
         this.htmlFields.push({ ...fields });
         this.applyHtmlOrganization(fields);
         (this.data.branchSetups ?? []).forEach(branch => this.applyHtmlBranch(fields, branch));
-        return this.data;
+        return this.finalizeImport();
     }
 
     public applyHtmlOrganization(fields: HtmlFields): void {
@@ -307,6 +327,7 @@ export class AutomaticSetupParser {
 
     public applyCsv(rows: CsvRow[]): AutomaticSetupSessionData {
         if (!rows.some(row => row.Interface === 'Branches')) throw new Error('CSV has no Branches row');
+        this.bmwLinkage.restore(this.data);
         const branch = createBranch(this.data.organizationSetup);
         this.htmlFields.forEach(fields => this.applyHtmlBranch(fields, branch));
         this.applySharedComponents(branch);
@@ -319,7 +340,7 @@ export class AutomaticSetupParser {
             if (row.Interface === 'Database ID' && row.cClientID) this.setDatabaseId(row.cClientID);
         });
         this.addBranch(branch);
-        return this.data;
+        return this.finalizeImport();
     }
 
     public applyCsvBranch(row: CsvRow, branch: BranchSetupType): void {
@@ -334,6 +355,7 @@ export class AutomaticSetupParser {
 
     public applyCsvDms(row: CsvRow, branch: BranchSetupType): void {
         switch (row.cOptionID) {
+            case 'DMS': this.setBranchDms(branch, { DMS: row.cValue }); break;
             case 'DistributionPartnerNumber': this.setBranchDms(branch, { dealerNumber: row.cValue }); break;
             case 'OutletNumber': this.setBranchDms(branch, { outletNumber: row.cValue }); break;
             case 'Firm': this.setBranchDms(branch, { DMSCompanyNumber: row.cValue }); break;
