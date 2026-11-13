@@ -1,8 +1,10 @@
 import { parseString } from 'fast-csv';
 import * as puppeteer from 'puppeteer';
-import type { AutomaticSetupSessionData, BranchSetupType } from '../../../dbacc/types/automaticSetup/AutomaticSetupSessionTypes';
+import type { AutomaticSetupSessionData, BranchSetupType } from './AutomaticSetupSessionTypes';
 import { getBrowser } from '../prettyPrint/html2pdf';
 import { createBranch } from './createBranch';
+import { createXServiceSetup } from './xServiceDefaults';
+import type { XServiceKey, XServiceSetup } from './xServiceSetupTypes';
 
 // One instance per organization/import session. Process its files sequentially.
 // Conflicts are tracked across all setter calls in this instance, including false/0.
@@ -53,7 +55,10 @@ export class AutomaticSetupParser {
     // Newly created branch defaults are not seeded as imported evidence.
     private assigned = new WeakMap<object, Record<string, Primitive[]>>();
 
-    constructor(public readonly data: AutomaticSetupSessionData) {
+    public readonly data: AutomaticSetupSessionData;
+
+    constructor(data: AutomaticSetupSessionData) {
+        this.data = data;
         this.trackExistingData(data);
     }
 
@@ -186,6 +191,30 @@ export class AutomaticSetupParser {
 
     // BRANCH SETTERS ---------------------------------------------------------
 
+    private ensureXService<K extends XServiceKey>(branch: BranchSetupType, key: K): XServiceSetup<K> {
+        if (!branch.BranchDetails[key]) Object.assign(branch.BranchDetails, { [key]: createXServiceSetup(key) });
+        return branch.BranchDetails[key] as XServiceSetup<K>;
+    }
+
+    /** Structured settings are assigned recursively so false/0 and array items track conflicts. */
+    public setBranchXService<K extends XServiceKey>(branch: BranchSetupType, key: K, values: Partial<XServiceSetup<K>>): void {
+        const apply = (target: object, source: object): void => {
+            Object.entries(source).forEach(([field, value]) => {
+                if (['__proto__', 'prototype', 'constructor'].includes(field)) throw new Error(`Invalid key: ${field}`);
+                if (value !== null && typeof value === 'object') {
+                    const fields = target as Record<string, unknown>;
+                    if (fields[field] === undefined) fields[field] = Array.isArray(value) ? [] : {};
+                    const current = fields[field];
+                    if (!current || typeof current !== 'object' || Array.isArray(current) !== Array.isArray(value)) {
+                        throw new Error(`Incompatible configuration container: ${field}`);
+                    }
+                    apply(current, value);
+                } else this.assignValue(target, field, value);
+            });
+        };
+        apply(this.ensureXService(branch, key), values);
+    }
+
     public setBranchGeneral(branch: BranchSetupType, values: Partial<BranchDetails['General']>): void {
         this.assignPresent(branch.BranchDetails.General, values);
     }
@@ -199,11 +228,11 @@ export class AutomaticSetupParser {
     }
 
     public setBranchExternalWheelStorage(branch: BranchSetupType, enabled: boolean): void {
-        this.assignValue(branch.BranchDetails.xWheels, 'enabled', enabled);
+        this.assignValue(this.ensureXService(branch, 'xWheels'), 'enabled', enabled);
     }
 
     public setBranchWheels(branch: BranchSetupType, values: Partial<BranchDetails['xWheels']>): void {
-        this.assignPresent(branch.BranchDetails.xWheels, values);
+        this.assignPresent(this.ensureXService(branch, 'xWheels'), values);
     }
 
     public setBranchBMWSettings(branch: BranchSetupType, values: Partial<BranchSetupType['Settings']['BMWSettings']>): void {
@@ -213,7 +242,7 @@ export class AutomaticSetupParser {
     public setBranchDms(branch: BranchSetupType, values: DmsValues): void {
         const { DMSCompanyNumber, ...dealerValues } = values;
         this.setBranchDealer(branch, dealerValues);
-        dmsInterfaces.forEach(service => this.assignPresent(branch.BranchDetails[service], values));
+        dmsInterfaces.forEach(service => this.assignPresent(this.ensureXService(branch, service), values));
         this.setBranchBMWSettings(branch, {
             FIRM: DMSCompanyNumber,
             BRANCH: values.DMSBranchNumber,
@@ -378,3 +407,4 @@ export function readHtmlFields(html: string, existingBrowser?: puppeteer.Browser
             .finally(() => page.close())),
     );
 }
+

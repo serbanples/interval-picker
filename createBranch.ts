@@ -1,4 +1,5 @@
-import type { AutomaticSetupSessionData, BranchSetupType } from '../../../dbacc/types/automaticSetup/AutomaticSetupSessionTypes';
+import type { AutomaticSetupSessionData, BranchSetupType } from './AutomaticSetupSessionTypes';
+import { initializeBranchXServices, xServiceDefinitions, xServiceKeys } from './xServiceDefaults';
 import { Factory } from '../../../factory';
 
 /** Organization setup in, new branch out. Synchronous and independent of the parser.
@@ -11,7 +12,7 @@ export function createBranch(
     createDefaults: () => BranchSetupType = () =>
         Factory.getInstance().getBzl().AutomaticSetupSessionBzl.getDefaultBranchSetup(),
 ): BranchSetupType {
-    const branch = createDefaults();
+    const branch = initializeBranchXServices(createDefaults());
     const { General, OnlineComponents, ExternalInterfaces } = organizationSetup.OrganizationDetails;
 
     if (General.preferredLanguage) {
@@ -20,9 +21,13 @@ export function createBranch(
     if (OnlineComponents.softAnalytics !== undefined) {
         branch.Settings.Analytics.analyticsDesire = String(OnlineComponents.softAnalytics);
     }
-    if (ExternalInterfaces.xStorage !== undefined) {
-        branch.BranchDetails.xWheels.enabled = ExternalInterfaces.xStorage;
-    }
+    const flags = ExternalInterfaces as unknown as Record<string, boolean | undefined>;
+    xServiceKeys.forEach(key => {
+        const flag = xServiceDefinitions[key].flag;
+        const enabled = flags[flag] ?? (key === 'xRentProvider' ? flags.xRentProvider : undefined);
+        if (enabled !== undefined) branch.BranchDetails[key]!.enabled = enabled;
+    });
 
     return branch;
 }
+

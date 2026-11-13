@@ -1,0 +1,9 @@
+{
+  "name": "automatic-setup-integration-snippets",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --import ./test/register.mjs --test test/xServices.test.ts"
+  },
+  "engines": { "node": ">=24" }
+}
